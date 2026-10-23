@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyName>ImperialTrooper</AssemblyName>
+    <RootNamespace>ImperialTrooperMod</RootNamespace>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <NoWarn>$(NoWarn);CS0618;CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="RiskOfRain2.GameLibs" Version="1.5.0-r.1" PrivateAssets="all" />
+    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx"><HintPath>lib/BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="R2API.Core"><HintPath>lib/R2API.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="R2API.Prefab"><HintPath>lib/R2API.Prefab.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="R2API.ContentManagement"><HintPath>lib/R2API.ContentManagement.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="R2API.Director"><HintPath>lib/R2API.Director.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="R2API.Addressables"><HintPath>lib/R2API.Addressables.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <TrooperAudio Include="Audio/*.mp3" />
+    <TrooperModel Include="Assets/Stormtrooper.imodel" />
+  </ItemGroup>
+  <Target Name="CollectModFiles" AfterTargets="Build">
+    <MakeDir Directories="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" />
+    <MakeDir Directories="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper/Audio" />
+    <Copy SourceFiles="@(TrooperAudio)" DestinationFiles="@(TrooperAudio->'$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper/Audio/%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(TrooperModel)" DestinationFolder="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

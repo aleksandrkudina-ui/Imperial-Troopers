@@ -1,0 +1,11 @@
+Imperial Troopers 0.3.4 — source patch
+Target: netstandard2.1 / RiskOfRain2.GameLibs 1.5.0-r.1
+
+Patch:
+- Replaced direct access `deathRewards.fallbackGold = 5u` with reflection lookup of `fallbackGold`.
+- Keeps reflection assignment for expReward and spawnValue backing fields.
+
+Reason:
+The user's runtime log reported FieldAccessException for `DeathRewards.fallbackGold` when called from ImperialTrooperPlugin.InitializeTrooper(). Reflection avoids compile-time field accessibility assumptions.
+
+Build status: NOT BUILT / NOT RUNTIME-TESTED in this environment. Run `dotnet build ImperialTrooperMod.csproj --configuration Release` on a machine with .NET SDK and required NuGet access, then test in Risk of Rain 2.

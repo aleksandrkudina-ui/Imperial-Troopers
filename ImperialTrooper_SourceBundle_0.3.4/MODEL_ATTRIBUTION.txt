@@ -1,0 +1,7 @@
+Source model: “(RIGGED) Stormtrooper” by GekWyd, Sketchfab.
+https://sketchfab.com/3d-models/rigged-stormtrooper-0a59c5ffa4a1476bac6d540b79947f31
+License listed on the source page: Creative Commons Attribution 4.0 International (CC BY 4.0).
+License: https://creativecommons.org/licenses/by/4.0/
+
+The source FBX supplied for this mod has been converted to a self-contained runtime mesh/rig payload and uses procedural bone motion. No original textures were present in the uploaded FBX; the mod assigns a plain ceramic material and generates basic visor/weapon details.
+Preserve the author attribution, source URL and license when redistributing the model.
