@@ -442,11 +442,50 @@ namespace ImperialTrooperMod
             return renderer != null ? renderer.sharedMaterial : null;
         }
 
-        private GameObject CreateRedBlasterGhost(Material template)
+        private GameObject CreateRedBlasterGhost(GameObject sourceGhost, Material template)
         {
-            if (template == null) throw new InvalidOperationException("The vanilla projectile supplied no material to build a custom red bolt.");
-            GameObject ghost = new GameObject("ImperialTrooperRedBoltGhost");
+            if (sourceGhost == null)
+                throw new InvalidOperationException("The selected vanilla projectile has no ghost prefab to clone.");
+            if (template == null)
+                throw new InvalidOperationException("The vanilla projectile supplied no material to build a custom red bolt.");
+
+            // Clone a valid RoR2 ghost prefab (rather than leaving a new GameObject alive at world origin),
+            // then replace only its visible effect with a slim red capsule and a straight trail.
+            GameObject ghost = PrefabAPI.InstantiateClone(sourceGhost, "ImperialTrooperRedBoltGhost", false);
             ghost.transform.localScale = Vector3.one;
+            foreach (Renderer renderer in ghost.GetComponentsInChildren<Renderer>(true))
+                if (renderer != null) renderer.enabled = false;
+            foreach (ParticleSystem particles in ghost.GetComponentsInChildren<ParticleSystem>(true))
+            {
+                if (particles == null) continue;
+                particles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                particles.Clear(true);
+                particles.enabled = false;
+            }
+            foreach (TrailRenderer oldTrail in ghost.GetComponentsInChildren<TrailRenderer>(true))
+                if (oldTrail != null) oldTrail.enabled = false;
+            foreach (Animator oldAnimator in ghost.GetComponentsInChildren<Animator>(true))
+                if (oldAnimator != null) oldAnimator.enabled = false;
+            foreach (MonoBehaviour behaviour in ghost.GetComponentsInChildren<MonoBehaviour>(true))
+            {
+                if (behaviour == null) continue;
+                string typeName = behaviour.GetType().Name;
+                if (typeName.IndexOf("ProjectileGhostController", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("ProjectileGhostComponent", StringComparison.OrdinalIgnoreCase) >= 0)
+                    continue;
+                if (typeName.IndexOf("Wave", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("Wobble", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("Orbit", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("Steer", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("Homing", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("TargetFinder", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("Oscillat", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    typeName.IndexOf("Wander", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Behaviour motion = behaviour as Behaviour;
+                    if (motion != null) motion.enabled = false;
+                }
+            }
 
             GameObject core = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             core.name = "RedBlasterBoltCore";
@@ -455,7 +494,7 @@ namespace ImperialTrooperMod
             core.transform.SetParent(ghost.transform, false);
             core.transform.localPosition = Vector3.zero;
             core.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-            core.transform.localScale = new Vector3(0.052f, 0.19f, 0.052f);
+            core.transform.localScale = new Vector3(0.045f, 0.17f, 0.045f);
 
             Material boltMaterial = new Material(template) { name = "ImperialTrooperRedBoltMaterial" };
             SetTint(boltMaterial, new Color(1f, 0.018f, 0.012f, 1f));
@@ -472,11 +511,14 @@ namespace ImperialTrooperMod
                 coreRenderer.receiveShadows = false;
             }
 
-            TrailRenderer trail = ghost.AddComponent<TrailRenderer>();
+            TrailRenderer trail = ghost.GetComponent<TrailRenderer>();
+            if (trail == null) trail = ghost.AddComponent<TrailRenderer>();
+            trail.enabled = true;
+            trail.Clear();
             trail.material = boltMaterial;
             trail.time = 0.13f;
-            trail.startWidth = 0.055f;
-            trail.endWidth = 0.004f;
+            trail.startWidth = 0.045f;
+            trail.endWidth = 0.002f;
             trail.minVertexDistance = 0.025f;
             trail.numCornerVertices = 2;
             trail.numCapVertices = 2;
@@ -566,7 +608,10 @@ namespace ImperialTrooperMod
                     }
                 }
 
-                controller.ghostPrefab = CreateRedBlasterGhost(sourceMaterial);
+                ProjectileController sourceController = source.GetComponent<ProjectileController>();
+                if (sourceController == null || sourceController.ghostPrefab == null)
+                    throw new InvalidOperationException("Selected projectile '" + selectedPath + "' does not expose a ghost prefab.");
+                controller.ghostPrefab = CreateRedBlasterGhost(sourceController.ghostPrefab, sourceMaterial);
 
                 Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
