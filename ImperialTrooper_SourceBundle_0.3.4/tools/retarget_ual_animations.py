@@ -93,7 +93,7 @@ def normalized_name(value):
 # Semantic names allow Unreal/Quaternius humanoid tracks to drive the Mixamo bones.
 ALIASES = {
     "hips": {"hips", "pelvis", "root"},
-    "spine": {"spine", "spine01", "spine1"},
+    "spine": {"spine", "spine01"},
     "spine1": {"spine02", "spine2"},
     "spine2": {"spine03", "spine3", "chest", "upperchest"},
     "neck": {"neck", "neck01", "neck1"},
