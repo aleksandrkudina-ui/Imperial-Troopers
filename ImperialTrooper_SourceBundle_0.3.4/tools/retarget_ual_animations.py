@@ -42,6 +42,20 @@ def flatten(node, parent=-1, result=None):
         flatten(child, index, result)
     return result
 
+def matmul(a, b):
+    return tuple(tuple(sum(a[r][k] * b[k][c] for k in range(4)) for c in range(4)) for r in range(4))
+
+def effective_bone_matrix(node, nodes):
+    # Assimp can place FBX translation/pre-rotation/rotation on helper parents
+    # instead of the actual skin bone. Collapse those helpers exactly as the
+    # runtime model converter does so animation local rotations use the same basis.
+    matrix = node["matrix"]
+    parent = node["parent"]
+    while parent >= 0 and "_$AssimpFbx$_" in nodes[parent]["name"]:
+        matrix = matmul(nodes[parent]["matrix"], matrix)
+        parent = nodes[parent]["parent"]
+    return matrix
+
 def quat_from_rot(m):
     tr = m[0][0] + m[1][1] + m[2][2]
     if tr > 0:
@@ -144,14 +158,14 @@ for node in target_nodes:
         continue
     key = semantic(node["name"])
     if key and key not in target_bones:
-        pos, rot, scale = decompose(node["matrix"])
+        pos, rot, scale = decompose(effective_bone_matrix(node, target_nodes))
         target_bones[key] = dict(node=node, pos=pos, rot=rot, scale=scale)
 for node in source_nodes:
     if "_$AssimpFbx$_" in node["name"]:
         continue
     key = semantic(node["name"])
     if key and key not in source_bones:
-        pos, rot, scale = decompose(node["matrix"])
+        pos, rot, scale = decompose(effective_bone_matrix(node, source_nodes))
         source_bones[key] = dict(node=node, pos=pos, rot=rot, scale=scale)
 
 def qnorm(q):
