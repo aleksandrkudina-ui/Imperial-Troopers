@@ -150,13 +150,13 @@ namespace ImperialTrooperMod
         private Transform rightArmProbe;
         private Transform leftLegProbe;
         private int actualSkinBoneBindings;
+        private int lastPumpedFrame = -1;
         internal int BoundTrackCount { get; private set; }
 
-        internal void Configure(Transform root, ImperialTrooperAnimationSet animationSet)
+        internal void Configure(Transform root, ImperialTrooperAnimationSet animationSet, bool forceRebind = false)
         {
             if (root == null || animationSet == null) return;
-            if (configured && visualRoot == root && set == animationSet &&
-                targetBindings != null && targetBindings.Count > 0)
+            if (!forceRebind && configured && visualRoot == root && set == animationSet && BindingsBelongToRoot(root))
             {
                 CharacterBody parentBody = GetComponentInParent<CharacterBody>();
                 if (parentBody != null) body = parentBody;
@@ -244,20 +244,31 @@ namespace ImperialTrooperMod
                 ", instanceRoot=" + root.name + ", rootActive=" + root.gameObject.activeInHierarchy + ".");
         }
 
+        private bool BindingsBelongToRoot(Transform root)
+        {
+            if (root == null || targetBindings == null || targetBindings.Count == 0) return false;
+            foreach (KeyValuePair<ImperialTrooperAnimationSet.Track, Transform> binding in targetBindings)
+            {
+                Transform target = binding.Value;
+                if (target == null || (target != root && !target.IsChildOf(root)))
+                    return false;
+            }
+            return true;
+        }
+
         private void EnsureInstanceBinding()
         {
-            // Rebind if this is a spawned clone; the prefab's Transform/dictionary references
-            // are not a valid substitute for a fresh per-instance binding.
-            if (configured && visualRoot == transform && set != null && targetBindings != null && targetBindings.Count > 0)
-            {
-                CharacterBody parentBody = GetComponentInParent<CharacterBody>();
-                if (parentBody != null) body = parentBody;
+            CharacterBody parentBody = GetComponentInParent<CharacterBody>();
+            if (parentBody != null) body = parentBody;
+
+            // A cloned MonoBehaviour may keep managed references to the prefab's Transform objects.
+            // A valid binding must prove every target bone belongs to THIS spawned visual root.
+            if (configured && visualRoot == transform && set != null && BindingsBelongToRoot(transform))
                 return;
-            }
 
             ImperialTrooperAnimationSet animationSet = ImperialTrooperPlugin.RuntimeTrooperAnimationSet;
             if (animationSet != null)
-                Configure(transform, animationSet);
+                Configure(transform, animationSet, true);
         }
 
         internal void SetCombat(bool active)
@@ -284,14 +295,31 @@ namespace ImperialTrooperMod
             EnsureInstanceBinding();
         }
 
-        private void LateUpdate()
+        internal void PumpFromPlugin()
         {
-            // These components are attached while constructing the prefab, then instantiated by
-            // RoR2. Private runtime references are not valid instance bindings after cloning.
+            if (!enabled) enabled = true;
+            if (lastPumpedFrame == Time.frameCount) return;
+
             EnsureInstanceBinding();
-            if (!configured || visualRoot == null || set == null || targetBindings == null || targetBindings.Count == 0)
+            if (!configured || visualRoot == null || set == null ||
+                targetBindings == null || targetBindings.Count == 0)
                 return;
 
+            // Prevent this controller from applying the same frame twice when LateUpdate also runs.
+            lastPumpedFrame = Time.frameCount;
+            TickAnimation();
+        }
+
+        private void LateUpdate()
+        {
+            // Main plugin Update drives every trooper on server and clients. LateUpdate remains
+            // a fallback for unusual spawn order, but never double-applies a pose in the same frame.
+            if (lastPumpedFrame == Time.frameCount) return;
+            PumpFromPlugin();
+        }
+
+        private void TickAnimation()
+        {
             if (body == null) body = GetComponentInParent<CharacterBody>();
             if (!loggedUpdateEntry)
             {
@@ -308,8 +336,6 @@ namespace ImperialTrooperMod
             {
                 if (!healthKnown || !aliveNow)
                 {
-                    // RoR2 can instantiate the prefab before its HealthComponent has started.
-                    // Do not mistake that startup interval for a death and freeze the death state.
                     if (!loggedInitialDeadState && healthKnown)
                     {
                         loggedInitialDeadState = true;
