@@ -13,6 +13,7 @@ using IOPath = System.IO.Path;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using UnityEngine.AddressableAssets;
 using UnityEngine.Networking;
 using UnityEngine.Rendering;
 using UnityEngine.Scripting;
@@ -40,6 +41,7 @@ namespace ImperialTrooperMod
         private static ImperialTrooperRuntimeModelData RuntimeTrooperModelData;
         internal static ImperialTrooperAnimationSet RuntimeTrooperAnimationSet;
         internal static AudioClip BlasterShotClip;
+        internal static AudioClip BlasterBurstClip;
         internal static AudioClip RadioContactClip;
         internal static AudioClip RadioTargetAcquiredClip;
         internal static AudioClip RadioMaintainFormationClip;
@@ -263,6 +265,7 @@ namespace ImperialTrooperMod
             string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
             Logger.LogInfo("Loading trooper audio from plugin directory: " + pluginDirectory);
             yield return LoadAudio(ResolveAudioAssetPath("Blaster_Shot.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Burst.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Blaster_Impact.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_ContactFront.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_TargetAcquired.wav"));
@@ -270,12 +273,12 @@ namespace ImperialTrooperMod
             yield return LoadAudio(ResolveAudioAssetPath("Radio_TrooperDown.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_Static.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Comms_Beep.wav"));
-            int loaded = new AudioClip[] { BlasterShotClip, BlasterImpactClip, RadioContactClip, RadioTargetAcquiredClip,
+            int loaded = new AudioClip[] { BlasterShotClip, BlasterBurstClip, BlasterImpactClip, RadioContactClip, RadioTargetAcquiredClip,
                 RadioMaintainFormationClip, RadioTrooperDownClip, RadioStaticClip, CommsBeepClip }.Count(c => c != null);
-            Logger.LogInfo("Trooper audio initialization finished: " + loaded + "/8 clips loaded. Blaster=" + (BlasterShotClip != null) +
-                ", Impact=" + (BlasterImpactClip != null) + ", Contact voice=" + (RadioContactClip != null) +
-                ", target voice=" + (RadioTargetAcquiredClip != null) + ", formation voice=" + (RadioMaintainFormationClip != null) +
-                ", trooper-down voice=" + (RadioTrooperDownClip != null) + ".");
+            Logger.LogInfo("Trooper audio initialization finished: " + loaded + "/9 clips loaded. Shot=" + (BlasterShotClip != null) +
+                ", Burst=" + (BlasterBurstClip != null) + ", Impact=" + (BlasterImpactClip != null) +
+                ", Contact voice=" + (RadioContactClip != null) + ", target voice=" + (RadioTargetAcquiredClip != null) +
+                ", formation voice=" + (RadioMaintainFormationClip != null) + ", trooper-down voice=" + (RadioTrooperDownClip != null) + ".");
         }
 
         private IEnumerator LoadAudio(string path)
@@ -326,6 +329,7 @@ namespace ImperialTrooperMod
             string file = IOPath.GetFileName(path);
             loadedClip.name = IOPath.GetFileNameWithoutExtension(file);
             if (file.Equals("Blaster_Shot.wav", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = loadedClip;
+            else if (file.Equals("Blaster_Burst.wav", StringComparison.OrdinalIgnoreCase)) BlasterBurstClip = loadedClip;
             else if (file.Equals("Radio_ContactFront.wav", StringComparison.OrdinalIgnoreCase)) RadioContactClip = loadedClip;
             else if (file.Equals("Radio_TargetAcquired.wav", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = loadedClip;
             else if (file.Equals("Radio_MaintainFormation.wav", StringComparison.OrdinalIgnoreCase)) RadioMaintainFormationClip = loadedClip;
@@ -341,14 +345,11 @@ namespace ImperialTrooperMod
 
         internal static void PlayClip(AudioClip clip, Vector3 position, float volume = 0.7f)
         {
-            if (clip == null)
-            {
-                LogSource?.LogWarning("PlayClip was called with a null AudioClip; sound was skipped.");
-                return;
-            }
+            if (clip == null) return;
             int kind = GetAudioKind(clip);
             bool networkEffectSpawned = false;
-            if (NetworkServer.active && kind >= 0 && AudioEffectPrefabs != null && kind < AudioEffectPrefabs.Length && AudioEffectPrefabs[kind] != null)
+            if (NetworkServer.active && kind >= 0 && AudioEffectPrefabs != null &&
+                kind < AudioEffectPrefabs.Length && AudioEffectPrefabs[kind] != null)
             {
                 try
                 {
@@ -357,14 +358,33 @@ namespace ImperialTrooperMod
                 }
                 catch (Exception ex) { LogSource?.LogWarning("Networked audio effect failed; using local playback: " + ex.Message); }
             }
-
-            // The listen-server/solo player must hear the sound even if a networked Effect prefab
-            // is registered but its local Start coroutine fails. Remote clients play the replicated effect.
             if (NetworkServer.active || !networkEffectSpawned)
-            {
-                try { AudioSource.PlayClipAtPoint(clip, position, Mathf.Clamp01(volume)); }
-                catch (Exception ex) { LogSource?.LogWarning("Audio playback failed for " + clip.name + ": " + ex.Message); }
-            }
+                PlayLocalClip(clip, position, volume, IsRadioClipKind(kind));
+        }
+
+        internal static bool IsRadioClipKind(int kind)
+        {
+            return (kind >= 1 && kind <= 5) || kind == 7;
+        }
+
+        internal static void PlayLocalClip(AudioClip clip, Vector3 position, float volume, bool radio)
+        {
+            if (clip == null) return;
+            GameObject audioObject = new GameObject("ImperialTrooperAudioPlayback_" + clip.name);
+            audioObject.transform.position = position;
+            AudioSource source = audioObject.AddComponent<AudioSource>();
+            source.clip = clip;
+            source.playOnAwake = false;
+            source.loop = false;
+            source.volume = Mathf.Clamp01(volume);
+            source.spatialBlend = radio ? 0.12f : 0.72f;
+            source.rolloffMode = AudioRolloffMode.Linear;
+            source.minDistance = radio ? 5f : 2f;
+            source.maxDistance = radio ? 55f : 42f;
+            source.dopplerLevel = 0f;
+            source.spread = radio ? 12f : 0f;
+            source.Play();
+            UnityEngine.Object.Destroy(audioObject, Mathf.Clamp(clip.length + 0.25f, 0.5f, 20f));
         }
 
         internal static AudioClip GetAudioClip(int kind)
@@ -379,13 +399,14 @@ namespace ImperialTrooperMod
                 case 5: return CommsBeepClip;
                 case 6: return BlasterImpactClip;
                 case 7: return RadioStaticClip;
+                case 8: return BlasterBurstClip;
                 default: return null;
             }
         }
 
         internal static float GetAudioVolume(int kind)
         {
-            switch (kind) { case 0: return .72f; case 1: case 2: case 3: return .82f; case 4: return .85f; case 5: return .42f; case 6: return .5f; default: return .35f; }
+            switch (kind) { case 0: return .72f; case 1: case 2: case 3: return .94f; case 4: return .90f; case 5: return .28f; case 6: return .55f; case 7: return .25f; case 8: return .78f; default: return .35f; }
         }
 
         private static int GetAudioKind(AudioClip clip)
@@ -398,13 +419,14 @@ namespace ImperialTrooperMod
             if (clip == CommsBeepClip) return 5;
             if (clip == BlasterImpactClip) return 6;
             if (clip == RadioStaticClip) return 7;
+            if (clip == BlasterBurstClip) return 8;
             return -1;
         }
 
         private void RegisterNetworkedAudioEffects()
         {
-            AudioEffectPrefabs = new GameObject[8];
-            string[] names = { "BlasterShot", "RadioContact", "RadioTarget", "RadioFormation", "TrooperDown", "CommsBeep", "BlasterImpact", "RadioStatic" };
+            AudioEffectPrefabs = new GameObject[9];
+            string[] names = { "BlasterShot", "RadioContact", "RadioTarget", "RadioFormation", "TrooperDown", "CommsBeep", "BlasterImpact", "RadioStatic", "BlasterBurst" };
             for (int i = 0; i < AudioEffectPrefabs.Length; i++)
             {
                 GameObject prefab = new GameObject("ImperialTrooperAudio_" + names[i]);
@@ -429,8 +451,8 @@ namespace ImperialTrooperMod
             if (firstContact) clip = RadioContactClip;
             else if (UnityEngine.Random.value < 0.5f) clip = RadioTargetAcquiredClip ?? RadioContactClip;
             else clip = RadioMaintainFormationClip ?? RadioContactClip;
-            if (clip != null) PlayClip(clip, position, 0.82f);
-            if (CommsBeepClip != null) PlayClip(CommsBeepClip, position, 0.42f);
+            if (clip != null) PlayClip(clip, position, 0.94f);
+            if (firstContact && CommsBeepClip != null) PlayClip(CommsBeepClip, position, 0.28f);
         }
 
         private Material FindProjectileMaterial(GameObject source)
@@ -1023,9 +1045,9 @@ namespace ImperialTrooperMod
                 Material gunDark = BuildMaterial("Imperial_RuntimeBlasterDark", new Color(0.025f, 0.035f, 0.040f), 0.35f, 0.38f, ceramic);
                 Material gunMetal = BuildMaterial("Imperial_RuntimeBlasterMetal", new Color(0.20f, 0.23f, 0.24f), 0.58f, 0.4f, ceramic);
                 GameObject gun = new GameObject("ImperialTrooperE11Blaster");
-                gun.transform.SetParent(importedRoot.transform, false);
-                gun.transform.localPosition = new Vector3(-0.82f, 2.07f, -0.08f);
-                gun.transform.localRotation = Quaternion.identity;
+                gun.transform.SetParent(rightHand, false);
+                gun.transform.localPosition = new Vector3(0f, 0.015f, 0.025f);
+                gun.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
                 gun.transform.localScale = Vector3.one;
                 CreateRuntimePart(gun.transform, "E11_Receiver", PrimitiveType.Cube, new Vector3(0f, 0f, -0.08f), new Vector3(0.14f, 0.10f, 0.30f), gunDark, Quaternion.identity);
                 CreateRuntimePart(gun.transform, "E11_Barrel", PrimitiveType.Cylinder, new Vector3(0f, 0.005f, -0.31f), new Vector3(0.031f, 0.13f, 0.031f), gunMetal, Quaternion.Euler(-90f, 0f, 0f));
@@ -1037,7 +1059,7 @@ namespace ImperialTrooperMod
                 muzzle.transform.SetParent(gun.transform, false);
                 muzzle.transform.localPosition = new Vector3(0f, 0.005f, -0.45f);
                 muzzle.transform.localRotation = Quaternion.identity;
-                gun.transform.SetParent(rightHand, true);
+                // Keep the E-11 in hand-local space; preserving the former root offset put it outside the silhouette.
             }
             else
             {
@@ -1662,7 +1684,7 @@ namespace ImperialTrooperMod
                 // replicated effect only on remote clients to avoid double volume in solo games.
                 if (!NetworkServer.active)
                 {
-                    try { AudioSource.PlayClipAtPoint(clip, transform.position, ImperialTrooperPlugin.GetAudioVolume(clipKind)); }
+                    try { ImperialTrooperPlugin.PlayLocalClip(clip, transform.position, ImperialTrooperPlugin.GetAudioVolume(clipKind), ImperialTrooperPlugin.IsRadioClipKind(clipKind)); }
                     catch (Exception ex) { ImperialTrooperPlugin.LogSource?.LogWarning("Networked trooper audio playback failed: " + ex.Message); }
                 }
                 yield return new WaitForSeconds(Mathf.Min(clip.length + 0.15f, 12f));
