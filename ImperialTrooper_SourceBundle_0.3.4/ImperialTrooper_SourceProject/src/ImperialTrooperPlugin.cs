@@ -27,7 +27,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.12";
+        public const string PluginVersion = "0.3.13";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -289,12 +289,21 @@ namespace ImperialTrooperMod
             }
 
             int frames = usableSampleCount / channels;
-            AudioClip clip = AudioClip.Create(IOPath.GetFileNameWithoutExtension(path), frames, channels, sampleRate, false);
-            if (clip == null || !clip.SetData(samples, 0))
+
+            // Fill a non-streaming AudioClip through Unity's documented PCM reader callback.
+            // SetData returned false on this game's Unity runtime even for valid mono WAV files.
+            // With stream=false Unity invokes this callback once while creating the resident clip,
+            // so it remains reusable for overlapping blaster shots and radio chatter.
+            AudioClip.PCMReaderCallback readPcm = output =>
             {
-                if (clip != null) UnityEngine.Object.Destroy(clip);
-                throw new InvalidDataException("Unity refused the decoded WAV sample data.");
-            }
+                Array.Clear(output, 0, output.Length);
+                int copyCount = Math.Min(output.Length, usableSampleCount);
+                if (copyCount > 0) Array.Copy(samples, 0, output, 0, copyCount);
+            };
+            AudioClip clip = AudioClip.Create(IOPath.GetFileNameWithoutExtension(path),
+                frames, channels, sampleRate, false, readPcm);
+            if (clip == null)
+                throw new InvalidDataException("Unity failed to create an AudioClip from PCM sample data.");
             if (clip.samples <= 0 || clip.length <= 0.01f)
             {
                 UnityEngine.Object.Destroy(clip);
@@ -565,7 +574,16 @@ namespace ImperialTrooperMod
             try
             {
                 Material sourceMaterial = FindProjectileMaterial(source);
-                if (sourceMaterial == null) throw new InvalidOperationException("Selected vanilla projectile has no renderer material.");
+                // Commando's grenade projectile has no render material on some game builds. Reuse
+                // the already validated vanilla Commando tracer material instead of failing back
+                // to instantaneous hitscan.
+                if (sourceMaterial == null) sourceMaterial = FindProjectileMaterial(RedTracerPrefab);
+                if (sourceMaterial == null)
+                {
+                    GameObject commandoBody = LegacyResourcesAPI.Load<GameObject>("Prefabs/CharacterBodies/CommandoBody");
+                    sourceMaterial = FindProjectileMaterial(commandoBody);
+                }
+                if (sourceMaterial == null) throw new InvalidOperationException("No material could be recovered from the source projectile, registered tracer, or vanilla Commando body.");
 
                 BlasterBoltPrefab = PrefabAPI.InstantiateClone(source, "ImperialTrooperBlasterBolt", true);
                 ProjectileController controller = BlasterBoltPrefab.GetComponent<ProjectileController>();
@@ -609,9 +627,16 @@ namespace ImperialTrooperMod
                 }
 
                 ProjectileController sourceController = source.GetComponent<ProjectileController>();
-                if (sourceController == null || sourceController.ghostPrefab == null)
-                    throw new InvalidOperationException("Selected projectile '" + selectedPath + "' does not expose a ghost prefab.");
-                controller.ghostPrefab = CreateRedBlasterGhost(sourceController.ghostPrefab, sourceMaterial);
+                GameObject ghostTemplate = sourceController != null ? sourceController.ghostPrefab : null;
+                if (ghostTemplate == null)
+                {
+                    GameObject lunarSource = LegacyResourcesAPI.Load<GameObject>("Prefabs/Projectiles/LunarGolemTwinShotProjectile");
+                    ProjectileController lunarController = lunarSource != null ? lunarSource.GetComponent<ProjectileController>() : null;
+                    if (lunarController != null) ghostTemplate = lunarController.ghostPrefab;
+                }
+                if (ghostTemplate == null)
+                    throw new InvalidOperationException("No vanilla projectile ghost prefab was available to clone.");
+                controller.ghostPrefab = CreateRedBlasterGhost(ghostTemplate, sourceMaterial);
 
                 Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
