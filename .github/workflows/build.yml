@@ -100,7 +100,7 @@ jobs:
 
           $manifest = @{
             name = "ImperialTroopers"
-            version_number = "0.3.13"
+            version_number = "0.3.14"
             website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
             description = "Risk of Rain 2 enemy mod adding Imperial troopers with blaster burst fire, tactical positioning, skeletal animations and radio chatter."
             dependencies = @(
@@ -131,7 +131,7 @@ jobs:
           '@
           [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
 
-          $zipPath = "PyramidHead-ImperialTroopers-0.3.13.zip"
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.14.zip"
           Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
           if (!(Test-Path $zipPath)) { throw "Thunderstore package ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -151,9 +151,9 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.13-package
+          name: ImperialTroopers-0.3.14-package
           path: |
-            PyramidHead-ImperialTroopers-0.3.13.zip
+            PyramidHead-ImperialTroopers-0.3.14.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
