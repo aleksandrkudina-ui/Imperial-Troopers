@@ -24,6 +24,8 @@
   <ItemGroup>
     <TrooperAudio Include="Audio/*.mp3" />
     <TrooperModel Include="Assets/Stormtrooper.imodel" />
+    <TrooperAnimations Include="Assets/Stormtrooper.ianim" />
+    <TrooperAnimationLicense Include="Assets/ANIMATION_LICENSE.txt" />
   </ItemGroup>
   <Target Name="CollectModFiles" AfterTargets="Build">
     <MakeDir Directories="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" />
@@ -31,5 +33,7 @@
     <MakeDir Directories="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper/Audio" />
     <Copy SourceFiles="@(TrooperAudio)" DestinationFiles="@(TrooperAudio->'$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper/Audio/%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(TrooperModel)" DestinationFolder="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(TrooperAnimations)" DestinationFolder="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(TrooperAnimationLicense)" DestinationFolder="$(MSBuildProjectDirectory)/release/plugins/ImperialTrooper" SkipUnchangedFiles="true" />
   </Target>
 </Project>
