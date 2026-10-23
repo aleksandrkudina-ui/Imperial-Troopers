@@ -155,9 +155,11 @@ namespace ImperialTrooperMod
         internal void Configure(Transform root, ImperialTrooperAnimationSet animationSet)
         {
             if (root == null || animationSet == null) return;
-            if (configured && visualRoot == root && set == animationSet)
+            if (configured && visualRoot == root && set == animationSet &&
+                targetBindings != null && targetBindings.Count > 0)
             {
-                if (body == null) body = GetComponentInParent<CharacterBody>();
+                CharacterBody parentBody = GetComponentInParent<CharacterBody>();
+                if (parentBody != null) body = parentBody;
                 return;
             }
 
@@ -244,9 +246,12 @@ namespace ImperialTrooperMod
 
         private void EnsureInstanceBinding()
         {
-            if (configured && visualRoot != null && set != null && targetBindings != null && targetBindings.Count > 0)
+            // Rebind if this is a spawned clone; the prefab's Transform/dictionary references
+            // are not a valid substitute for a fresh per-instance binding.
+            if (configured && visualRoot == transform && set != null && targetBindings != null && targetBindings.Count > 0)
             {
-                if (body == null) body = GetComponentInParent<CharacterBody>();
+                CharacterBody parentBody = GetComponentInParent<CharacterBody>();
+                if (parentBody != null) body = parentBody;
                 return;
             }
 
