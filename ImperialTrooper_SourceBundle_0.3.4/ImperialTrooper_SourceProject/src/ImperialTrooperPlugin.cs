@@ -26,7 +26,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.8";
+        public const string PluginVersion = "0.3.9";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -160,17 +160,33 @@ namespace ImperialTrooperMod
             }.Perform();
         }
 
+        private string ResolveAudioAssetPath(string fileName)
+        {
+            string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
+            string nestedPath = IOPath.Combine(pluginDirectory, "Audio", fileName);
+            if (File.Exists(nestedPath)) return nestedPath;
+
+            // Thunderstore's local-mod import can flatten files from the archive into the
+            // plugin directory. Accept both the packaged Audio/ layout and the flattened one.
+            string rootPath = IOPath.Combine(pluginDirectory, fileName);
+            if (File.Exists(rootPath))
+            {
+                Logger.LogInfo("Found audio asset in plugin root (Audio/ folder not used): " + fileName);
+                return rootPath;
+            }
+            return nestedPath;
+        }
+
         private IEnumerator LoadAudioAssets()
         {
-            string audioFolder = IOPath.Combine(IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath, "Audio");
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Blaster_Shot.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Blaster_Impact.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Radio_ContactFront.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Radio_TargetAcquired.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Radio_MaintainFormation.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Radio_TrooperDown.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Radio_Static.mp3"));
-            yield return LoadAudio(IOPath.Combine(audioFolder, "Comms_Beep.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Shot.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Impact.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_ContactFront.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_TargetAcquired.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_MaintainFormation.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_TrooperDown.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_Static.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Comms_Beep.mp3"));
             Logger.LogInfo("Trooper audio initialization finished. Blaster=" + (BlasterShotClip != null) + ", Contact voice=" + (RadioContactClip != null) + ", target voice=" + (RadioTargetAcquiredClip != null) + ", formation voice=" + (RadioMaintainFormationClip != null));
         }
 
