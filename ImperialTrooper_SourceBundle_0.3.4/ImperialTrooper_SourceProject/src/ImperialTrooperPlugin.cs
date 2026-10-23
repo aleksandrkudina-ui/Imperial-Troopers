@@ -27,7 +27,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.14";
+        public const string PluginVersion = "0.3.15";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -49,6 +49,8 @@ namespace ImperialTrooperMod
         internal static AudioClip BlasterImpactClip;
         internal static ManualLogSource LogSource;
         private static bool initialized;
+        private readonly HashSet<int> animationPumpWarnings = new HashSet<int>();
+        private int lastAnimationPumpDiagnostic = -1;
 
         private void Awake()
         {
@@ -70,6 +72,82 @@ namespace ImperialTrooperMod
             }
         }
 
+        private void Update()
+        {
+            // Drive model clips centrally from the always-live plugin object. RoR2 clones and
+            // replaces body/model prefab hierarchies during spawn; a MonoBehaviour placed only
+            // on the prefab child may retain prefab Transform references or miss runtime ticks.
+            ImperialTrooperAnimationSet animationSet = RuntimeTrooperAnimationSet;
+            if (animationSet == null || !initialized) return;
+
+            var bodies = CharacterBody.readOnlyInstancesList;
+            int foundBodies = 0;
+            int tickedPlayers = 0;
+            for (int i = 0; i < bodies.Count; i++)
+            {
+                CharacterBody body = bodies[i];
+                if (body == null || body.GetComponent<ImperialTrooperBrain>() == null) continue;
+                foundBodies++;
+
+                ModelLocator locator = body.GetComponent<ModelLocator>();
+                Transform modelRoot = locator != null ? locator.modelTransform : null;
+                if (modelRoot == null)
+                {
+                    CharacterModel model = body.GetComponentInChildren<CharacterModel>(true);
+                    if (model != null) modelRoot = model.transform;
+                }
+                if (modelRoot == null) continue;
+
+                ImperialTrooperAnimationPlayer player = modelRoot.GetComponentInChildren<ImperialTrooperAnimationPlayer>(true);
+                if (player == null)
+                {
+                    // Recover if RoR2's model setup replaced the serialized child component while
+                    // keeping the rigged visual. Don't silently leave a valid skinned mesh frozen.
+                    Transform importedRoot = null;
+                    foreach (Transform child in modelRoot.GetComponentsInChildren<Transform>(true))
+                    {
+                        if (child != null && string.Equals(child.name, "ImperialTrooperImportedVisuals", StringComparison.Ordinal))
+                        {
+                            importedRoot = child;
+                            break;
+                        }
+                    }
+
+                    if (importedRoot != null)
+                    {
+                        player = importedRoot.GetComponent<ImperialTrooperAnimationPlayer>();
+                        if (player == null) player = importedRoot.gameObject.AddComponent<ImperialTrooperAnimationPlayer>();
+                        player.Configure(importedRoot, animationSet, true);
+                        Logger.LogWarning("Animation pump restored ImperialTrooperAnimationPlayer on spawned model instance " +
+                            body.GetInstanceID() + " after it was missing from the cloned hierarchy.");
+                    }
+                }
+
+                if (player == null)
+                {
+                    if (animationPumpWarnings.Add(body.GetInstanceID()))
+                        Logger.LogWarning("Animation pump could not find a rigged visual or animation player for trooper body " +
+                            body.name + " (instance " + body.GetInstanceID() + ").");
+                    continue;
+                }
+
+                if (!player.enabled) player.enabled = true;
+                player.PumpFromPlugin();
+                tickedPlayers++;
+            }
+
+            if (foundBodies > 0 && lastAnimationPumpDiagnostic != Time.frameCount)
+            {
+                lastAnimationPumpDiagnostic = Time.frameCount;
+                // Log only once per newly observed body set, not every frame.
+                if (tickedPlayers > 0 && !animationPumpWarnings.Contains(-1))
+                {
+                    animationPumpWarnings.Add(-1);
+                    Logger.LogInfo("Central animation pump active: trooperBodies=" + foundBodies +
+                        ", animationPlayersUpdated=" + tickedPlayers + " (server and client visual instances).");
+                }
+            }
+        }
 
         private void OnServerStageBegin(Stage stage)
         {
