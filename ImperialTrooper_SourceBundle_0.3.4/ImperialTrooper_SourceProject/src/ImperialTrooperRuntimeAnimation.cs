@@ -144,6 +144,7 @@ namespace ImperialTrooperMod
         private float actionStartTime;
         private float actionEndTime;
         private bool inCombat;
+        private bool movementCommand;
         private bool deathStarted;
         private bool loggedFirstPose;
         private Transform leftArmProbe;
@@ -276,6 +277,11 @@ namespace ImperialTrooperMod
             inCombat = active;
         }
 
+        internal void SetMovement(bool moving)
+        {
+            movementCommand = moving;
+        }
+
         internal void PlayShot()
         {
             if (fire == null || deathStarted) return;
@@ -372,20 +378,18 @@ namespace ImperialTrooperMod
                 return;
             }
 
-            float speed = body != null && body.characterMotor != null ? body.characterMotor.velocity.magnitude : 0f;
-            if (action != null && Time.time < actionEndTime)
-            {
-                ApplyClip(action, Time.time - actionStartTime, false);
-                LogPoseApplied(action.Name);
-                return;
-            }
-            action = null;
+            Vector3 planarVelocity = body != null && body.characterMotor != null
+                ? body.characterMotor.velocity : Vector3.zero;
+            planarVelocity.y = 0f;
+            float speed = planarVelocity.magnitude;
+            bool firingAction = action != null && Time.time < actionEndTime;
+            if (!firingAction) action = null;
 
             ImperialTrooperAnimationSet.Clip next;
             if (speed > 4.0f && jog != null) next = jog;
-            else if (speed > 0.35f && walk != null) next = walk;
+            else if ((movementCommand || speed > 0.35f) && walk != null) next = walk;
             else if (inCombat && aim != null) next = aim;
-            else next = aim ?? idle ?? walk ?? jog ?? death;
+            else next = idle ?? aim ?? walk ?? jog ?? death;
 
             if (next == null) return;
             if (current != next)
@@ -393,10 +397,16 @@ namespace ImperialTrooperMod
                 current = next;
                 currentStartTime = Time.time;
             }
+
+            // Keep the lower-body locomotion clip running while firing; a shot is an upper-body overlay,
+            // not a full-body action that freezes the legs and resets all bones on every burst bullet.
             ApplyClip(current, Time.time - currentStartTime, current.Loop);
-            if ((current == walk || current == jog) && inCombat && aim != null)
+            bool moving = movementCommand || speed > 0.35f;
+            if (moving && inCombat && aim != null)
                 ApplyUpperBodyClip(aim, Time.time - currentStartTime);
-            LogPoseApplied(current.Name);
+            if (firingAction && action != null)
+                ApplyUpperBodyClip(action, Time.time - actionStartTime);
+            LogPoseApplied(firingAction && action != null ? action.Name : current.Name);
         }
 
         private void LogPoseApplied(string clipName)
