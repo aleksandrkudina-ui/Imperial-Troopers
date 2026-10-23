@@ -110,8 +110,8 @@ def normalized_name(value):
 ALIASES = {
     "hips": {"hips", "pelvis"},
     "spine": {"spine", "spine01"},
-    "spine1": {"spine02", "spine2"},
-    "spine2": {"spine03", "spine3", "chest", "upperchest"},
+    "spine1": {"spine1", "spine02"},
+    "spine2": {"spine2", "spine03", "spine3", "chest", "upperchest"},
     "neck": {"neck", "neck01", "neck1"},
     "head": {"head"},
     "leftshoulder": {"leftshoulder", "shoulderl", "claviclel", "leftclavicle"},
