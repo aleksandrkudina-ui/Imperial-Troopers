@@ -30,25 +30,14 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $project = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject"
-          $archive = Join-Path $env:RUNNER_TEMP "UAL1_Standard.zip"
           $assetDirectory = Join-Path $env:RUNNER_TEMP "UAL1_Standard"
-          $metadata = Invoke-RestMethod -Method Post -Uri "https://quaternius.itch.io/universal-animation-library/file/17958403?source=game_download&as_props=1" -Headers @{ "User-Agent" = "Mozilla/5.0" }
-          if (!$metadata.url) { throw "Quaternius did not return a download URL for its Standard animation pack" }
-          Invoke-WebRequest -Uri $metadata.url -OutFile $archive
-          Expand-Archive -Path $archive -DestinationPath $assetDirectory -Force
-          $animationFiles = @(Get-ChildItem -Path $assetDirectory -Recurse -File | Where-Object { $_.Extension -in @(".glb", ".fbx") })
-          if ($animationFiles.Count -eq 0) {
-            Get-ChildItem -Path $assetDirectory -Recurse -File | Select-Object -ExpandProperty FullName
-            throw "The official Quaternius Standard archive contained no GLB or FBX animation files"
-          }
-          Write-Host "Animation model files supplied in official Quaternius Standard archive:"
-          $animationFiles | ForEach-Object { Write-Host ("{0} ({1} bytes)" -f $_.FullName, $_.Length) }
-          # The creator switched the Unreal export to GLB in 2026. Prefer GLB first because
-          # Assimp currently sees no clips in the packaged Unity FBX variant on CI.
-          $animationSourceFile = $animationFiles | Where-Object { $_.Name -eq "UAL1_Standard.glb" } | Select-Object -First 1
-          if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -eq "UAL1_Standard.fbx" } | Select-Object -First 1 }
-          if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -match "Standard.*\.(glb|fbx)$" } | Select-Object -First 1 }
-          if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Sort-Object Length -Descending | Select-Object -First 1 }
+          New-Item -ItemType Directory -Path $assetDirectory -Force | Out-Null
+          $animationSource = Join-Path $assetDirectory "UAL1_Standard.glb"
+          $animationSourceUrl = "https://raw.githubusercontent.com/Barbatos6669/elderforge/bb2ce469f0ab2ccfc487faef55550ba07fae2483/assets/animations/universal_animation_library_1/UAL1_Standard.glb"
+          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.16" }
+          if (!(Test-Path $animationSource) -or (Get-Item $animationSource).Length -lt 1000000) { throw "Pinned CC0 UAL1 Standard GLB download is missing or unexpectedly small" }
+          Write-Host ("Using pinned CC0 Quaternius UAL1 source from " + $animationSourceUrl + " (" + (Get-Item $animationSource).Length + " bytes)")
+          $animationSourceFile = Get-Item $animationSource
           python -m pip install --disable-pip-version-check assimp_py pillow imageio-ffmpeg
           if ($LASTEXITCODE -ne 0) { throw "Could not install assimp_py for animation conversion" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/convert_fbx_to_itmd.py" "$project/Assets/Stormtrooper.fbx" "$project/Assets/Stormtrooper.imodel"
@@ -100,7 +89,7 @@ jobs:
 
           $manifest = @{
             name = "ImperialTroopers"
-            version_number = "0.3.14"
+            version_number = "0.3.16"
             website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
             description = "Risk of Rain 2 enemy mod adding Imperial troopers with blaster burst fire, tactical positioning, skeletal animations and radio chatter."
             dependencies = @(
@@ -131,7 +120,7 @@ jobs:
           '@
           [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
 
-          $zipPath = "PyramidHead-ImperialTroopers-0.3.14.zip"
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.16.zip"
           Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
           if (!(Test-Path $zipPath)) { throw "Thunderstore package ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -151,9 +140,9 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.14-package
+          name: ImperialTroopers-0.3.16-package
           path: |
-            PyramidHead-ImperialTroopers-0.3.14.zip
+            PyramidHead-ImperialTroopers-0.3.16.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
