@@ -234,7 +234,7 @@ def clip_label(name):
     norm = "".join(ch.lower() for ch in str(name or "") if ch.isalnum())
     # Detect weapon-specific clips before generic "idle", otherwise Pistol_Idle_Loop
     # would incorrectly replace the standing idle cycle.
-    if any(token in norm for token in ("pistolaim", "rifleaim", "gunidle", "rifleidle", "aimidle")) or norm in ("aim", "pistolaime", "pistolaidlelo"):
+    if any(token in norm for token in ("pistolaim", "pistolidle", "rifleaim", "gunidle", "rifleidle", "aimidle")) or norm in ("aim", "pistolaime"):
         return "aim"
     if any(token in norm for token in ("pistolshoot", "rifleshoot", "gunshoot", "shoot", "fire")):
         return "fire"
