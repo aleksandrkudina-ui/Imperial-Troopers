@@ -79,7 +79,7 @@ jobs:
         shell: pwsh
         run: |
           $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
-          $zipPath = "ImperialTroopers_0.3.7_build.zip"
+          $zipPath = "ImperialTroopers_0.3.8_build.zip"
           Compress-Archive -Path "$dir/*" -DestinationPath $zipPath -Force
           if (!(Test-Path $zipPath)) { throw "Thunderstore plugin ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -99,9 +99,9 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.7-build
+          name: ImperialTroopers-0.3.8-build
           path: |
-            ImperialTroopers_0.3.7_build.zip
+            ImperialTroopers_0.3.8_build.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
