@@ -136,7 +136,7 @@ namespace ImperialTrooperMod
         private float actionEndTime;
         private bool inCombat;
         private bool deathStarted;
-        private bool didLogTargetCount;
+        internal int BoundTrackCount { get; private set; }
 
         internal void Configure(Transform root, ImperialTrooperAnimationSet animationSet)
         {
@@ -171,6 +171,7 @@ namespace ImperialTrooperMod
                 }
             }
 
+            BoundTrackCount = bound;
             body = GetComponentInParent<CharacterBody>();
             current = idle ?? walk ?? jog;
             currentStartTime = Time.time;
