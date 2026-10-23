@@ -20,11 +20,32 @@ mesh = scene.meshes[0]
 
 nodes=[]
 node_indices={}
-def walk(node, parent):
-    idx=len(nodes); node_indices[node.name]=idx
-    nodes.append({'name':node.name,'parent':parent,'matrix':tuple(tuple(float(v) for v in row) for row in node.transformation)})
-    for child in node.children: walk(child, idx)
-walk(scene.root_node, -1)
+node_object_indices={}
+IDENTITY = tuple(tuple(1.0 if r == c else 0.0 for c in range(4)) for r in range(4))
+
+def matmul(a, b):
+    return tuple(tuple(sum(a[r][k] * b[k][c] for k in range(4)) for c in range(4)) for r in range(4))
+
+def walk(node, parent, accumulated):
+    local = tuple(tuple(float(v) for v in row) for row in node.transformation)
+    combined = matmul(accumulated, local)
+    # Assimp exposes FBX pre-rotation/rotation/translation helpers as extra nodes.
+    # Preserve their transforms but collapse the helpers into the real bone nodes.
+    is_helper = "_$AssimpFbx$_" in str(node.name)
+    if is_helper:
+        next_parent = parent
+        next_accumulated = combined
+    else:
+        idx = len(nodes)
+        node_indices[node.name] = idx
+        node_object_indices[id(node)] = idx
+        nodes.append({'name': node.name, 'parent': parent, 'matrix': combined})
+        next_parent = idx
+        next_accumulated = IDENTITY
+    for child in node.children:
+        walk(child, next_parent, next_accumulated)
+
+walk(scene.root_node, -1, IDENTITY)
 
 def quat_from_rot(m):
     tr=m[0][0]+m[1][1]+m[2][2]
@@ -61,9 +82,13 @@ for i,n in enumerate(nodes):
     # We lookup the actual node below using a second deterministic traversal.
     pass
 def find_mesh_node(node):
-    if 0 in node.mesh_indices: return node_indices[node.name]
-    for c in node.children:
-        got=find_mesh_node(c)
+    if 0 in node.mesh_indices:
+        idx = node_object_indices.get(id(node))
+        if idx is None:
+            raise RuntimeError('Mesh is attached directly to an FBX helper node; an explicit mesh transform node is required.')
+        return idx
+    for child in node.children:
+        got = find_mesh_node(child)
         if got is not None: return got
     return None
 mesh_node=find_mesh_node(scene.root_node)
