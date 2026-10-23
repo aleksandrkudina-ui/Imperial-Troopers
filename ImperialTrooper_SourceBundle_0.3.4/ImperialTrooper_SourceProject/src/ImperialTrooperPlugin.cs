@@ -32,6 +32,7 @@ namespace ImperialTrooperMod
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
         internal static GameObject BlasterBoltPrefab;
+        internal static Material BlasterBoltMaterial;
         internal static GameObject[] AudioEffectPrefabs = Array.Empty<GameObject>();
         internal static GameObject TrooperMasterPrefab;
         private static AssetBundle ImportedTrooperAssetBundle;
@@ -464,6 +465,58 @@ namespace ImperialTrooperMod
             return ghost;
         }
 
+        private void ClearProjectileGhostReferences(ProjectileController controller)
+        {
+            if (controller == null) return;
+            int cleared = 0;
+            bool foundGhostMember = false;
+            Type type = controller.GetType();
+            while (type != null)
+            {
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+                foreach (FieldInfo field in type.GetFields(flags))
+                {
+                    if (field.Name.IndexOf("ghostPrefab", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    foundGhostMember = true;
+                    if (field.FieldType.IsValueType) continue;
+                    try
+                    {
+                        if (field.GetValue(controller) != null)
+                        {
+                            field.SetValue(controller, null);
+                            cleared++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogDebug("Could not clear projectile ghost field " + field.Name + ": " + ex.Message);
+                    }
+                }
+                foreach (PropertyInfo property in type.GetProperties(flags))
+                {
+                    if (property.Name.IndexOf("ghostPrefab", StringComparison.OrdinalIgnoreCase) < 0 ||
+                        property.GetIndexParameters().Length != 0 || property.GetSetMethod(true) == null) continue;
+                    foundGhostMember = true;
+                    if (property.PropertyType.IsValueType) continue;
+                    try
+                    {
+                        if (property.GetValue(controller, null) != null)
+                        {
+                            property.GetSetMethod(true).Invoke(controller, new object[] { null });
+                            cleared++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogDebug("Could not clear projectile ghost property " + property.Name + ": " + ex.Message);
+                    }
+                }
+                type = type.BaseType;
+            }
+            Logger.LogInfo("Projectile ghost reference cleanup: foundMember=" + foundGhostMember + ", cleared=" + cleared +
+                "; the red bolt visual is attached directly to the moving projectile.");
+        }
+
         private void TryRegisterBlasterBolt()
         {
             // Never use the Lunar Golem twin-shot prefab: its blue orb and oscillating movement
@@ -494,6 +547,15 @@ namespace ImperialTrooperMod
                     sourceMaterial = FindProjectileMaterial(commandoBody);
                 }
                 if (sourceMaterial == null) throw new InvalidOperationException("No material could be recovered from the source projectile, registered tracer, or vanilla Commando body.");
+
+                if (BlasterBoltMaterial != null) Destroy(BlasterBoltMaterial);
+                BlasterBoltMaterial = new Material(sourceMaterial) { name = "ImperialTrooperRedBoltMaterial" };
+                SetTint(BlasterBoltMaterial, new Color(1f, 0.018f, 0.012f, 1f));
+                if (BlasterBoltMaterial.HasProperty("_EmissionColor"))
+                {
+                    BlasterBoltMaterial.EnableKeyword("_EMISSION");
+                    BlasterBoltMaterial.SetColor("_EmissionColor", new Color(1f, 0.006f, 0.002f, 1f) * 4.0f);
+                }
 
                 BlasterBoltPrefab = PrefabAPI.InstantiateClone(source, "ImperialTrooperBlasterBolt", true);
                 ProjectileController controller = BlasterBoltPrefab.GetComponent<ProjectileController>();
@@ -536,19 +598,19 @@ namespace ImperialTrooperMod
                     }
                 }
 
-                // Current RoR2 versions no longer populate every vanilla ProjectileController.ghostPrefab
-                // reference directly. Use our already cloned/tinted Commando tracer as a local ghost
-                // template instead of depending on a vanilla projectile's legacy ghost field.
-                GameObject ghostTemplate = RedTracerPrefab;
-                if (ghostTemplate == null)
-                    throw new InvalidOperationException("The vanilla Commando tracer prefab was unavailable; refusing to fall back to instant hitscan.");
-                controller.ghostPrefab = CreateRedBlasterGhost(ghostTemplate, sourceMaterial);
+                // RoR2 1.5 stores vanilla projectile ghosts as addressable references. Rather
+                // than depending on a missing legacy ghost prefab, render the bolt as a child of the
+                // actual projectile transform; this guarantees a visible moving red bolt on clients.
+                ClearProjectileGhostReferences(controller);
+                ImperialTrooperBoltVisual boltVisual = BlasterBoltPrefab.GetComponent<ImperialTrooperBoltVisual>();
+                if (boltVisual == null) boltVisual = BlasterBoltPrefab.AddComponent<ImperialTrooperBoltVisual>();
+                boltVisual.Initialize(BlasterBoltMaterial);
 
                 Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
-                Logger.LogInfo("Registered custom straight red E-11 bolt using " + selectedPath +
-                    " (4.5 m/s, 5 s lifetime, red Commando-tracer-derived capsule/trail ghost; no Lunar Golem motion).");
+                Logger.LogInfo("Registered custom straight red E-11 projectile using " + selectedPath +
+                    " (4.5 m/s, 5 s lifetime, root-attached red capsule/trail visual, legacy ghost references cleared).");
             }
             catch (Exception ex)
             {
@@ -1437,6 +1499,91 @@ namespace ImperialTrooperMod
             go.transform.localScale=new Vector3(radius*2f,length/2f,radius*2f);
             Renderer r=go.GetComponent<Renderer>(); if(r!=null) r.sharedMaterial=material;
             Transform b=bone(targetBone); if(b!=null) go.transform.SetParent(b,true);
+        }
+    }
+
+    public sealed class ImperialTrooperBoltVisual : MonoBehaviour
+    {
+        [SerializeField] private Material boltMaterial;
+        private GameObject coreObject;
+        private TrailRenderer trail;
+        private bool prepared;
+
+        internal void Initialize(Material material)
+        {
+            if (material != null) boltMaterial = material;
+            // The projectile prefab is stored inactive; its visual children are created on OnEnable
+            // for each spawned projectile instance, not while the definition prefab is registered.
+        }
+
+        private void Awake() { EnsureVisual(); }
+        private void OnEnable() { EnsureVisual(); }
+
+        private void EnsureVisual()
+        {
+            if (prepared) return;
+            Material material = boltMaterial != null ? boltMaterial : ImperialTrooperPlugin.BlasterBoltMaterial;
+            if (material == null)
+            {
+                ImperialTrooperPlugin.LogSource?.LogWarning("Red bolt visual could not initialize because its material is missing.");
+                return;
+            }
+            boltMaterial = material;
+
+            Transform existing = transform.Find("ImperialTrooperRedBoltCore");
+            if (existing != null) coreObject = existing.gameObject;
+            if (coreObject == null)
+            {
+                coreObject = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+                coreObject.name = "ImperialTrooperRedBoltCore";
+                Collider collider = coreObject.GetComponent<Collider>();
+                if (collider != null) Destroy(collider);
+                coreObject.transform.SetParent(transform, false);
+                coreObject.transform.localPosition = Vector3.zero;
+                coreObject.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+                coreObject.transform.localScale = new Vector3(0.045f, 0.17f, 0.045f);
+            }
+
+            Renderer coreRenderer = coreObject.GetComponent<Renderer>();
+            if (coreRenderer != null)
+            {
+                coreRenderer.sharedMaterial = boltMaterial;
+                coreRenderer.shadowCastingMode = ShadowCastingMode.Off;
+                coreRenderer.receiveShadows = false;
+            }
+
+            trail = GetComponent<TrailRenderer>();
+            if (trail == null) trail = gameObject.AddComponent<TrailRenderer>();
+            trail.sharedMaterial = boltMaterial;
+            trail.enabled = true;
+            trail.time = 0.14f;
+            trail.startWidth = 0.042f;
+            trail.endWidth = 0.0015f;
+            trail.minVertexDistance = 0.018f;
+            trail.numCornerVertices = 2;
+            trail.numCapVertices = 2;
+            trail.shadowCastingMode = ShadowCastingMode.Off;
+            trail.receiveShadows = false;
+            trail.alignment = LineAlignment.View;
+            Gradient gradient = new Gradient();
+            gradient.SetKeys(
+                new[] {
+                    new GradientColorKey(new Color(1f, 0.012f, 0.006f), 0f),
+                    new GradientColorKey(new Color(1f, 0.14f, 0.025f), 1f)
+                },
+                new[] {
+                    new GradientAlphaKey(0.95f, 0f),
+                    new GradientAlphaKey(0.60f, 0.62f),
+                    new GradientAlphaKey(0f, 1f)
+                });
+            trail.colorGradient = gradient;
+            trail.Clear();
+            prepared = true;
+        }
+
+        private void OnDisable()
+        {
+            if (trail != null) trail.Clear();
         }
     }
 
