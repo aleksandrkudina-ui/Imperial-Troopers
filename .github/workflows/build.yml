@@ -30,12 +30,26 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $project = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject"
-          $animationSource = Join-Path $env:RUNNER_TEMP "UAL1_Standard.fbx"
-          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Khyretos/kk-engine/6e8521a373664d842541b7af4e3d1c89978a591e/assets/animations/UAL1_Standard.fbx" -OutFile $animationSource
+          $archive = Join-Path $env:RUNNER_TEMP "UAL1_Standard.zip"
+          $assetDirectory = Join-Path $env:RUNNER_TEMP "UAL1_Standard"
+          $metadata = Invoke-RestMethod -Method Post -Uri "https://quaternius.itch.io/universal-animation-library/file/17958403?source=game_download&as_props=1" -Headers @{ "User-Agent" = "Mozilla/5.0" }
+          if (!$metadata.url) { throw "Quaternius did not return a download URL for its Standard animation pack" }
+          Invoke-WebRequest -Uri $metadata.url -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $assetDirectory -Force
+          $fbxFiles = @(Get-ChildItem -Path $assetDirectory -Recurse -File -Filter *.fbx)
+          if ($fbxFiles.Count -eq 0) {
+            Get-ChildItem -Path $assetDirectory -Recurse -File | Select-Object -ExpandProperty FullName
+            throw "The official Quaternius Standard archive contained no FBX animation files"
+          }
+          Write-Host "FBX files supplied in official Quaternius Standard archive:"
+          $fbxFiles | ForEach-Object { Write-Host ("{0} ({1} bytes)" -f $_.FullName, $_.Length) }
+          $animationSourceFile = $fbxFiles | Where-Object { $_.Name -eq "UAL1_Standard.fbx" } | Select-Object -First 1
+          if (!$animationSourceFile) { $animationSourceFile = $fbxFiles | Where-Object { $_.Name -match "Standard.*\.fbx$" } | Select-Object -First 1 }
+          if (!$animationSourceFile) { $animationSourceFile = $fbxFiles | Sort-Object Length -Descending | Select-Object -First 1 }
           python -m pip install --disable-pip-version-check assimp_py
           if ($LASTEXITCODE -ne 0) { throw "Could not install assimp_py for animation conversion" }
-          python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$animationSource" "$project/Assets/Stormtrooper.ianim"
-          if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect the clip and bone mapping output above" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$($animationSourceFile.FullName)" "$project/Assets/Stormtrooper.ianim"
+          if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect clip and bone mapping output above" }
 
       - name: Restore
         working-directory: ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject
