@@ -79,14 +79,29 @@ jobs:
         shell: pwsh
         run: |
           $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
-          Compress-Archive -Path "$dir/*" -DestinationPath "ImperialTroopers_0.3.6_build.zip" -Force
+          $zipPath = "ImperialTroopers_0.3.6_build.zip"
+          Compress-Archive -Path "$dir/*" -DestinationPath $zipPath -Force
+          if (!(Test-Path $zipPath)) { throw "Thunderstore plugin ZIP was not created" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
+          try {
+            $entryNames = @($zip.Entries | ForEach-Object { $_.FullName })
+            $required = @("ImperialTrooper.dll", "Stormtrooper.imodel", "Stormtrooper.ianim", "ANIMATION_LICENSE.txt")
+            foreach ($name in $required) {
+              if ($entryNames -notcontains $name) { throw "Thunderstore ZIP is missing required entry: $name" }
+            }
+            if (!($entryNames | Where-Object { $_ -like "Audio/*.mp3" })) { throw "Thunderstore ZIP contains no packaged MP3 audio files" }
+            Write-Host ("Validated ZIP entries: " + ($entryNames -join ", "))
+          }
+          finally { $zip.Dispose() }
+          if ((Get-Item $zipPath).Length -lt 100000) { throw "Thunderstore plugin ZIP is unexpectedly small" }
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ImperialTroopers-0.3.6-build
           path: |
-            ImperialTroopers_0.3.4_build.zip
+            ImperialTroopers_0.3.6_build.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
