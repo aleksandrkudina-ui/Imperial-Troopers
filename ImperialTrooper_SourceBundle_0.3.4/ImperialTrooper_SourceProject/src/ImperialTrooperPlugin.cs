@@ -907,6 +907,22 @@ namespace ImperialTrooperMod
 
         private GameObject BuildRuntimeStormtrooperModel(Transform modelRoot)
         {
+            // The body prefab is cloned from Commando. Its old Animator must not compete
+            // with the independent imported Stormtrooper skeleton.
+            int disabledVanillaAnimators = 0;
+            foreach (Animator vanillaAnimator in modelRoot.GetComponentsInChildren<Animator>(true))
+            {
+                if (vanillaAnimator == null) continue;
+                vanillaAnimator.applyRootMotion = false;
+                vanillaAnimator.runtimeAnimatorController = null;
+                if (vanillaAnimator.enabled)
+                {
+                    vanillaAnimator.enabled = false;
+                    disabledVanillaAnimators++;
+                }
+            }
+            Logger.LogInfo("Disabled " + disabledVanillaAnimators + " inherited Commando Animator components before attaching the Stormtrooper rig.");
+
             foreach (Renderer renderer in modelRoot.GetComponentsInChildren<Renderer>(true))
                 if (renderer != null) renderer.enabled = false;
 
