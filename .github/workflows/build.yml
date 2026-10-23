@@ -49,10 +49,14 @@ jobs:
           if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -eq "UAL1_Standard.fbx" } | Select-Object -First 1 }
           if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -match "Standard.*\.(glb|fbx)$" } | Select-Object -First 1 }
           if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Sort-Object Length -Descending | Select-Object -First 1 }
-          python -m pip install --disable-pip-version-check assimp_py pillow
+          python -m pip install --disable-pip-version-check assimp_py pillow imageio-ffmpeg
           if ($LASTEXITCODE -ne 0) { throw "Could not install assimp_py for animation conversion" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/convert_fbx_to_itmd.py" "$project/Assets/Stormtrooper.fbx" "$project/Assets/Stormtrooper.imodel"
+          if ($LASTEXITCODE -ne 0) { throw "Rigged model conversion failed; inspect helper-bone collapse output above" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$($animationSourceFile.FullName)" "$project/Assets/Stormtrooper.ianim"
           if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect clip and bone mapping output above" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/convert_audio_to_wav.py" "$project/Audio"
+          if ($LASTEXITCODE -ne 0) { throw "MP3 to WAV conversion failed; the game needs Unity-compatible PCM audio" }
 
       - name: Restore
         working-directory: ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject
@@ -82,8 +86,8 @@ jobs:
           if (!(Test-Path "$dir/icon.png")) { throw "Thunderstore mod icon is missing" }
           python -c "from PIL import Image; import sys; im=Image.open(sys.argv[1]); assert im.format == 'PNG' and im.size == (256,256), f'icon must be a 256x256 PNG, got {im.format} {im.size}'" "$dir/icon.png"
           if ($LASTEXITCODE -ne 0) { throw "Thunderstore mod icon failed validation" }
-          $audio = Get-ChildItem "$dir/Audio" -Filter *.mp3
-          if ($audio.Count -lt 1) { throw "No MP3 audio files were packaged" }
+          $audio = Get-ChildItem "$dir/Audio" -Filter *.wav
+          if ($audio.Count -lt 1) { throw "Fewer than eight PCM WAV audio files were packaged" }
 
       - name: Create Thunderstore package ZIP
         shell: pwsh
@@ -96,7 +100,7 @@ jobs:
 
           $manifest = @{
             name = "ImperialTroopers"
-            version_number = "0.3.10"
+            version_number = "0.3.11"
             website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
             description = "Risk of Rain 2 enemy mod adding Imperial troopers with blaster burst fire, tactical positioning, skeletal animations and radio chatter."
             dependencies = @(
@@ -127,7 +131,7 @@ jobs:
           '@
           [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
 
-          $zipPath = "PyramidHead-ImperialTroopers-0.3.10.zip"
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.11.zip"
           Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
           if (!(Test-Path $zipPath)) { throw "Thunderstore package ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -138,7 +142,7 @@ jobs:
             foreach ($name in $required) {
               if ($entryNames -notcontains $name) { throw "Thunderstore ZIP is missing required entry: $name" }
             }
-            if (!($entryNames | Where-Object { $_ -like "Audio/*.mp3" })) { throw "Thunderstore ZIP contains no packaged MP3 audio files" }
+            if (!($entryNames | Where-Object { $_ -like "Audio/*.wav" })) { throw "Thunderstore ZIP contains no packaged PCM WAV audio files" }
             Write-Host ("Validated Thunderstore package entries: " + ($entryNames -join ", "))
           }
           finally { $zip.Dispose() }
@@ -147,9 +151,9 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.10-package
+          name: ImperialTroopers-0.3.11-package
           path: |
-            PyramidHead-ImperialTroopers-0.3.10.zip
+            PyramidHead-ImperialTroopers-0.3.11.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
