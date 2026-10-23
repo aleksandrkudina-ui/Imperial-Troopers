@@ -26,7 +26,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.9";
+        public const string PluginVersion = "0.3.10";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -166,19 +166,22 @@ namespace ImperialTrooperMod
             string nestedPath = IOPath.Combine(pluginDirectory, "Audio", fileName);
             if (File.Exists(nestedPath)) return nestedPath;
 
-            // Thunderstore's local-mod import can flatten files from the archive into the
-            // plugin directory. Accept both the packaged Audio/ layout and the flattened one.
+            // Thunderstore's local-mod importer flattens some archives. Search both supported layouts.
             string rootPath = IOPath.Combine(pluginDirectory, fileName);
             if (File.Exists(rootPath))
             {
-                Logger.LogInfo("Found audio asset in plugin root (Audio/ folder not used): " + fileName);
+                Logger.LogInfo("Found audio asset in plugin root: " + fileName);
                 return rootPath;
             }
+
+            Logger.LogWarning("Audio asset missing from both supported locations: " + nestedPath + " and " + rootPath);
             return nestedPath;
         }
 
         private IEnumerator LoadAudioAssets()
         {
+            string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
+            Logger.LogInfo("Loading trooper audio from plugin directory: " + pluginDirectory);
             yield return LoadAudio(ResolveAudioAssetPath("Blaster_Shot.mp3"));
             yield return LoadAudio(ResolveAudioAssetPath("Blaster_Impact.mp3"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_ContactFront.mp3"));
@@ -187,7 +190,12 @@ namespace ImperialTrooperMod
             yield return LoadAudio(ResolveAudioAssetPath("Radio_TrooperDown.mp3"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_Static.mp3"));
             yield return LoadAudio(ResolveAudioAssetPath("Comms_Beep.mp3"));
-            Logger.LogInfo("Trooper audio initialization finished. Blaster=" + (BlasterShotClip != null) + ", Contact voice=" + (RadioContactClip != null) + ", target voice=" + (RadioTargetAcquiredClip != null) + ", formation voice=" + (RadioMaintainFormationClip != null));
+            int loaded = new AudioClip[] { BlasterShotClip, BlasterImpactClip, RadioContactClip, RadioTargetAcquiredClip,
+                RadioMaintainFormationClip, RadioTrooperDownClip, RadioStaticClip, CommsBeepClip }.Count(c => c != null);
+            Logger.LogInfo("Trooper audio initialization finished: " + loaded + "/8 clips loaded. Blaster=" + (BlasterShotClip != null) +
+                ", Impact=" + (BlasterImpactClip != null) + ", Contact voice=" + (RadioContactClip != null) +
+                ", target voice=" + (RadioTargetAcquiredClip != null) + ", formation voice=" + (RadioMaintainFormationClip != null) +
+                ", trooper-down voice=" + (RadioTrooperDownClip != null) + ".");
         }
 
         private IEnumerator LoadAudio(string path)
@@ -198,49 +206,73 @@ namespace ImperialTrooperMod
                 yield break;
             }
 
-            using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(new Uri(path).AbsoluteUri, AudioType.MPEG))
+            AudioClip loadedClip = null;
+            string uri;
+            try { uri = new Uri(IOPath.GetFullPath(path)).AbsoluteUri; }
+            catch (Exception ex)
             {
+                Logger.LogWarning("Could not create audio file URI for " + path + ": " + ex.Message);
+                yield break;
+            }
+
+            using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(uri, AudioType.MPEG))
+            {
+                request.timeout = 15;
                 yield return request.SendWebRequest();
                 if (request.result != UnityWebRequest.Result.Success)
                 {
-                    Logger.LogWarning("Could not load audio " + IOPath.GetFileName(path) + ": " + request.error);
+                    Logger.LogWarning("Could not decode audio " + IOPath.GetFileName(path) + " (" + uri + "): " + request.error);
                     yield break;
                 }
 
-                AudioClip clip = DownloadHandlerAudioClip.GetContent(request);
-                if (clip == null)
-                {
-                    Logger.LogWarning("Audio decoder returned no clip for " + IOPath.GetFileName(path));
-                    yield break;
-                }
-
-                string file = IOPath.GetFileName(path);
-                if (file.Equals("Blaster_Shot.mp3", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = clip;
-                else if (file.Equals("Radio_ContactFront.mp3", StringComparison.OrdinalIgnoreCase)) RadioContactClip = clip;
-                else if (file.Equals("Radio_TargetAcquired.mp3", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = clip;
-                else if (file.Equals("Radio_MaintainFormation.mp3", StringComparison.OrdinalIgnoreCase)) RadioMaintainFormationClip = clip;
-                else if (file.Equals("Radio_TrooperDown.mp3", StringComparison.OrdinalIgnoreCase)) RadioTrooperDownClip = clip;
-                else if (file.Equals("Radio_Static.mp3", StringComparison.OrdinalIgnoreCase)) RadioStaticClip = clip;
-                else if (file.Equals("Comms_Beep.mp3", StringComparison.OrdinalIgnoreCase)) CommsBeepClip = clip;
-                else if (file.Equals("Blaster_Impact.mp3", StringComparison.OrdinalIgnoreCase)) BlasterImpactClip = clip;
+                loadedClip = DownloadHandlerAudioClip.GetContent(request);
             }
+
+            if (loadedClip == null)
+            {
+                Logger.LogWarning("Audio decoder returned no clip for " + IOPath.GetFileName(path) + ".");
+                yield break;
+            }
+
+            string file = IOPath.GetFileName(path);
+            loadedClip.name = IOPath.GetFileNameWithoutExtension(file);
+            if (file.Equals("Blaster_Shot.mp3", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = loadedClip;
+            else if (file.Equals("Radio_ContactFront.mp3", StringComparison.OrdinalIgnoreCase)) RadioContactClip = loadedClip;
+            else if (file.Equals("Radio_TargetAcquired.mp3", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = loadedClip;
+            else if (file.Equals("Radio_MaintainFormation.mp3", StringComparison.OrdinalIgnoreCase)) RadioMaintainFormationClip = loadedClip;
+            else if (file.Equals("Radio_TrooperDown.mp3", StringComparison.OrdinalIgnoreCase)) RadioTrooperDownClip = loadedClip;
+            else if (file.Equals("Radio_Static.mp3", StringComparison.OrdinalIgnoreCase)) RadioStaticClip = loadedClip;
+            else if (file.Equals("Comms_Beep.mp3", StringComparison.OrdinalIgnoreCase)) CommsBeepClip = loadedClip;
+            else if (file.Equals("Blaster_Impact.mp3", StringComparison.OrdinalIgnoreCase)) BlasterImpactClip = loadedClip;
+            Logger.LogInfo("Loaded audio: " + file + " (" + loadedClip.length.ToString("0.00") + " sec, " + new FileInfo(path).Length + " bytes).");
         }
 
         internal static void PlayClip(AudioClip clip, Vector3 position, float volume = 0.7f)
         {
-            if (clip == null) return;
+            if (clip == null)
+            {
+                LogSource?.LogWarning("PlayClip was called with a null AudioClip; sound was skipped.");
+                return;
+            }
             int kind = GetAudioKind(clip);
+            bool networkEffectSpawned = false;
             if (NetworkServer.active && kind >= 0 && AudioEffectPrefabs != null && kind < AudioEffectPrefabs.Length && AudioEffectPrefabs[kind] != null)
             {
                 try
                 {
                     EffectManager.SpawnEffect(AudioEffectPrefabs[kind], new EffectData { origin = position, scale = 1f }, true);
-                    return;
+                    networkEffectSpawned = true;
                 }
                 catch (Exception ex) { LogSource?.LogWarning("Networked audio effect failed; using local playback: " + ex.Message); }
             }
-            try { AudioSource.PlayClipAtPoint(clip, position, Mathf.Clamp01(volume)); }
-            catch (Exception ex) { LogSource?.LogWarning("Audio playback failed: " + ex.Message); }
+
+            // The listen-server/solo player must hear the sound even if a networked Effect prefab
+            // is registered but its local Start coroutine fails. Remote clients play the replicated effect.
+            if (NetworkServer.active || !networkEffectSpawned)
+            {
+                try { AudioSource.PlayClipAtPoint(clip, position, Mathf.Clamp01(volume)); }
+                catch (Exception ex) { LogSource?.LogWarning("Audio playback failed for " + clip.name + ": " + ex.Message); }
+            }
         }
 
         internal static AudioClip GetAudioClip(int kind)
@@ -1246,8 +1278,13 @@ namespace ImperialTrooperMod
             }
             if (clip != null)
             {
-                try { AudioSource.PlayClipAtPoint(clip, transform.position, ImperialTrooperPlugin.GetAudioVolume(clipKind)); }
-                catch (Exception ex) { ImperialTrooperPlugin.LogSource?.LogWarning("Networked trooper audio playback failed: " + ex.Message); }
+                // On the host, ImperialTrooperPlugin.PlayClip already plays locally; play this
+                // replicated effect only on remote clients to avoid double volume in solo games.
+                if (!NetworkServer.active)
+                {
+                    try { AudioSource.PlayClipAtPoint(clip, transform.position, ImperialTrooperPlugin.GetAudioVolume(clipKind)); }
+                    catch (Exception ex) { ImperialTrooperPlugin.LogSource?.LogWarning("Networked trooper audio playback failed: " + ex.Message); }
+                }
                 yield return new WaitForSeconds(Mathf.Min(clip.length + 0.15f, 12f));
             }
             else yield return new WaitForSeconds(0.25f);
