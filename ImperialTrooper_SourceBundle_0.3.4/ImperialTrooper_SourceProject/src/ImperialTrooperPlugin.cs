@@ -572,7 +572,7 @@ namespace ImperialTrooperMod
                 if (controller == null) controller = BlasterBoltPrefab.AddComponent<ProjectileController>();
                 ProjectileSimple simple = BlasterBoltPrefab.GetComponent<ProjectileSimple>();
                 if (simple == null) simple = BlasterBoltPrefab.AddComponent<ProjectileSimple>();
-                simple.desiredForwardSpeed = 6.5f;
+                simple.desiredForwardSpeed = 4.5f;
                 simple.lifetime = 5f;
                 simple.updateAfterFiring = true;
 
@@ -617,7 +617,7 @@ namespace ImperialTrooperMod
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
                 Logger.LogInfo("Registered custom straight red E-11 bolt using " + selectedPath +
-                    " (6.5 m/s, 5 s lifetime, custom capsule/trail ghost; vanilla source renderers disabled).");
+                    " (4.5 m/s, 5 s lifetime, custom red capsule/trail ghost; vanilla source renderers disabled).");
             }
             catch (Exception ex)
             {
@@ -1903,7 +1903,7 @@ namespace ImperialTrooperMod
                     crit = critical,
                     damageColorIndex = DamageColorIndex.Default,
                     useSpeedOverride = true,
-                    speedOverride = 6.5f
+                    speedOverride = 4.5f
                 };
                 ProjectileManager.instance.FireProjectile(info);
             }
