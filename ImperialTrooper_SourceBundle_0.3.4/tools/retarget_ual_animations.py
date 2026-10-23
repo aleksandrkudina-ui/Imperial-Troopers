@@ -4,10 +4,12 @@
 Input animation source is the CC0 Quaternius Universal Animation Library Standard FBX.
 No Unity Editor is required. Uses assimp-py to read FBX animation keys and emits ITAN runtime clips.
 """
+import json
 import math
 import struct
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 import assimp_py
 
 FLAGS = (
@@ -275,7 +277,123 @@ def choose_clips(animations):
         raise RuntimeError("Could not find required usable clips " + ", ".join(missing) + ". Source clips: " + "; ".join(available))
     return candidates
 
-selected = choose_clips(source_scene.animations)
+def read_glb(path):
+    data = path.read_bytes()
+    if len(data) < 20 or data[:4] != b"glTF":
+        raise RuntimeError("Not a valid GLB file: " + str(path))
+    version, total_length = struct.unpack_from("<II", data, 4)
+    if version != 2 or total_length > len(data):
+        raise RuntimeError("Unsupported or truncated GLB file: " + str(path))
+    cursor = 12
+    document = None
+    binary_chunk = b""
+    while cursor + 8 <= len(data):
+        chunk_length, chunk_type = struct.unpack_from("<II", data, cursor)
+        cursor += 8
+        chunk = data[cursor:cursor + chunk_length]
+        if len(chunk) != chunk_length:
+            raise RuntimeError("Truncated GLB chunk in " + str(path))
+        cursor += chunk_length
+        if chunk_type == 0x4E4F534A:
+            document = json.loads(chunk.decode("utf-8").rstrip("\x00 \t\r\n"))
+        elif chunk_type == 0x004E4942:
+            binary_chunk = chunk
+    if document is None:
+        raise RuntimeError("GLB has no JSON chunk: " + str(path))
+    return document, binary_chunk
+
+def read_gltf_accessor(document, binary_chunk, accessor_index):
+    accessor = document["accessors"][accessor_index]
+    if "sparse" in accessor:
+        raise RuntimeError("Sparse glTF animation accessors are not supported by this retargeter.")
+    if "bufferView" not in accessor:
+        raise RuntimeError("glTF animation accessor has no bufferView.")
+    view = document["bufferViews"][accessor["bufferView"]]
+    formats = {5120: ("b", 1), 5121: ("B", 1), 5122: ("h", 2),
+               5123: ("H", 2), 5125: ("I", 4), 5126: ("f", 4)}
+    widths = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4,
+              "MAT2": 4, "MAT3": 9, "MAT4": 16}
+    component = accessor["componentType"]
+    value_format, component_size = formats[component]
+    components = widths[accessor["type"]]
+    element_size = components * component_size
+    stride = view.get("byteStride", element_size)
+    start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+    if "uri" in document.get("buffers", [{}])[view.get("buffer", 0)]:
+        raise RuntimeError("External buffers are not supported; expected a self-contained GLB.")
+    result = []
+    fmt = "<" + value_format * components
+    for index in range(accessor["count"]):
+        offset = start + index * stride
+        values = struct.unpack_from(fmt, binary_chunk, offset)
+        result.append(values[0] if components == 1 else tuple(values))
+    return result
+
+def read_glb_animations(path):
+    document, binary_chunk = read_glb(path)
+    raw_animations = document.get("animations", [])
+    print("GLB animation metadata: " + str(len(raw_animations)) + " clips in " + str(path))
+    if not raw_animations:
+        return []
+    records = []
+    for animation in raw_animations:
+        tracks_by_node = {}
+        duration = 0.0
+        samplers = animation.get("samplers", [])
+        for channel in animation.get("channels", []):
+            target = channel.get("target", {})
+            if "node" not in target or target.get("path") not in ("translation", "rotation", "scale"):
+                continue
+            node_index = int(target["node"])
+            node = document.get("nodes", [])[node_index]
+            node_name = str(node.get("name", "node_" + str(node_index)))
+            sampler = samplers[int(channel["sampler"])]
+            times = [float(value) for value in read_gltf_accessor(document, binary_chunk, int(sampler["input"]))]
+            values = read_gltf_accessor(document, binary_chunk, int(sampler["output"]))
+            interpolation = sampler.get("interpolation", "LINEAR")
+            if interpolation == "CUBICSPLINE":
+                if len(values) != len(times) * 3:
+                    raise RuntimeError("Invalid CUBICSPLINE key count in clip " + str(animation.get("name", "")))
+                values = [values[index * 3 + 1] for index in range(len(times))]
+            if len(times) != len(values):
+                raise RuntimeError("Animation input/output key count mismatch in clip " + str(animation.get("name", "")))
+            if times:
+                duration = max(duration, max(times))
+            record = tracks_by_node.setdefault(node_index, {
+                "node_name": node_name, "position_key_times": [], "position_key_values": [],
+                "rotation_key_times": [], "rotation_key_values": [],
+                "scaling_key_times": [], "scaling_key_values": []
+            })
+            if target["path"] == "translation":
+                record["position_key_times"] = times
+                record["position_key_values"] = [float(v) for row in values for v in (row if isinstance(row, tuple) else (row,))]
+            elif target["path"] == "rotation":
+                record["rotation_key_times"] = times
+                record["rotation_key_values"] = [float(v) for row in values for v in (row if isinstance(row, tuple) else (row,))]
+            elif target["path"] == "scale":
+                record["scaling_key_times"] = times
+                record["scaling_key_values"] = [float(v) for row in values for v in (row if isinstance(row, tuple) else (row,))]
+        channels = [SimpleNamespace(**value) for value in tracks_by_node.values()]
+        records.append(SimpleNamespace(
+            name=str(animation.get("name", "")),
+            duration=float(duration),
+            ticks_per_second=1.0,
+            channels=channels
+        ))
+    print("GLB clips: " + ", ".join(str(a.name) + " (" + str(round(a.duration, 2)) + "s)" for a in records))
+    return records
+
+source_animations = list(getattr(source_scene, "animations", []) or [])
+if source_path.suffix.lower() == ".glb":
+    # Read glTF 2 animation accessors directly. assimp_py 1.1.0 returns no clips for
+    # Quaternius's published GLB even though the GLB contains animation arrays.
+    glb_animations = read_glb_animations(source_path)
+    if glb_animations:
+        source_animations = glb_animations
+if not source_animations:
+    raise RuntimeError("Animation source contains no skeletal clips after FBX/GLB import: " + str(source_path))
+
+selected = choose_clips(source_animations)
 print("UAL animation source: " + str(source_path))
 print("Target mapped bones: " + ", ".join(sorted(target_bones.keys())))
 print("Source mapped bones: " + ", ".join(sorted(source_bones.keys())))
