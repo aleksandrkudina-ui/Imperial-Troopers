@@ -1531,6 +1531,8 @@ namespace ImperialTrooperMod
             if (target == null || IsPlayerCloaked(target))
             {
                 GetAnimationPlayer()?.SetCombat(false);
+                SetMoveVector(Vector3.zero);
+                shotsRemainingInBurst = 0;
                 cachedTarget = null;
                 previouslyHadTarget = false;
                 return;
@@ -1538,6 +1540,8 @@ namespace ImperialTrooperMod
             if ((target.corePosition - body.corePosition).sqrMagnitude > DetectionRange * DetectionRange)
             {
                 GetAnimationPlayer()?.SetCombat(false);
+                SetMoveVector(Vector3.zero);
+                shotsRemainingInBurst = 0;
                 cachedTarget = null;
                 previouslyHadTarget = false;
                 return;
@@ -1550,19 +1554,35 @@ namespace ImperialTrooperMod
             if (aim.sqrMagnitude < 0.01f) return;
 
             InputBankTest input = GetComponent<InputBankTest>();
-            if (input != null) input.aimDirection = aim.normalized;
+            float planarDistance = Vector3.Distance(new Vector3(body.corePosition.x, 0f, body.corePosition.z),
+                new Vector3(target.corePosition.x, 0f, target.corePosition.z));
+            if (input != null)
+            {
+                input.aimDirection = aim.normalized;
+                UpdateTacticalMovement(input, target.corePosition - body.corePosition, planarDistance, origin, targetPoint);
+            }
 
             if (Time.time > nextVoiceTime)
             {
                 ImperialTrooperPlugin.PlayRadioChatter(body.corePosition, !previouslyHadTarget);
-                nextVoiceTime = Time.time + UnityEngine.Random.Range(9f, 15f);
+                nextVoiceTime = Time.time + UnityEngine.Random.Range(6f, 10f);
             }
             previouslyHadTarget = true;
 
-            if (Time.time >= nextShotTime)
+            // Three controlled blaster shots followed by a brief reset, rather than isolated random shots.
+            if (shotsRemainingInBurst <= 0 && Time.time >= nextShotTime)
+            {
+                shotsRemainingInBurst = Mathf.Clamp(BurstShotCount, 1, 5);
+                nextBurstShotTime = Time.time;
+            }
+            if (shotsRemainingInBurst > 0 && Time.time >= nextBurstShotTime)
             {
                 FireBlaster(origin, aim.normalized);
-                nextShotTime = Time.time + FireInterval / Mathf.Max(0.75f, body.attackSpeed) * UnityEngine.Random.Range(0.88f, 1.18f);
+                shotsRemainingInBurst--;
+                if (shotsRemainingInBurst > 0)
+                    nextBurstShotTime = Time.time + Mathf.Max(0.12f, BurstShotInterval);
+                else
+                    nextShotTime = Time.time + FireInterval / Mathf.Max(0.75f, body.attackSpeed) * UnityEngine.Random.Range(0.9f, 1.12f);
             }
         }
 
