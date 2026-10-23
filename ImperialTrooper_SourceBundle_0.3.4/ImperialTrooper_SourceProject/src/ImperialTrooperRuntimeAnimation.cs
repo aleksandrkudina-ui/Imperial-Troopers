@@ -194,6 +194,22 @@ namespace ImperialTrooperMod
             // Default to weapon-ready stance instead of a potentially T-pose-like civilian idle.
             current = aim ?? idle ?? walk ?? jog;
             currentStartTime = Time.time;
+
+            // Pose the serialized body prefab immediately. Waiting for the first LateUpdate
+            // leaves a default skinned mesh in T-pose during prefab setup and on clones whose
+            // animation component is temporarily inactive during RoR2's model initialization.
+            if (current != null)
+            {
+                ApplyClip(current, 0f, current.Loop);
+                ImperialTrooperPlugin.LogSource?.LogInfo("Initial authored Stormtrooper pose applied during setup: clip=" +
+                    current.Name + ", leftArmEuler=" +
+                    (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                    ", rightArmEuler=" +
+                    (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                    ", leftLegEuler=" +
+                    (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
+            }
+
             ImperialTrooperPlugin.LogSource?.LogInfo("Retargeted Stormtrooper skeletal clips loaded: " + set.ClipCount +
                 " clips; idle=" + (idle != null) + ", walk=" + (walk != null) + ", jog=" + (jog != null) +
                 ", aim=" + (aim != null) + ", fire=" + (fire != null) + ", death=" + (death != null) +
