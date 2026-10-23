@@ -234,24 +234,42 @@ def channel_semantic(channel):
 
 def clip_label(name):
     norm = "".join(ch.lower() for ch in str(name or "") if ch.isalnum())
-    # Detect weapon-specific clips before generic "idle", otherwise Pistol_Idle_Loop
-    # would incorrectly replace the standing idle cycle.
-    if any(token in norm for token in ("pistolaim", "pistolidle", "rifleaim", "gunidle", "rifleidle", "aimidle")) or norm in ("aim", "pistolaime"):
+
+    # Use exact known clip names first. Broad substring matching selected
+    # crouch-idle and formal-walk clips instead of the intended locomotion loops.
+    exact = {
+        "idleloop": "idle",
+        "walkloop": "walk",
+        "walkfwdloop": "walk",
+        "walkforwardloop": "walk",
+        "jogfwdloop": "jog",
+        "jogloop": "jog",
+        "runfwdloop": "jog",
+        "runloop": "jog",
+        "sprintloop": "jog",
+        "death01": "death",
+        "deathloop": "death",
+        "pistolidleloop": "aim",
+        "rifleidlelo": "aim",
+        "rifleidleloop": "aim",
+        "pistolshoot": "fire",
+        "rifleshoot": "fire",
+        "gunshoot": "fire",
+    }
+    if norm in exact:
+        return exact[norm]
+
+    # Conservative fallbacks for alternate naming conventions.
+    if norm.startswith("death") or norm in ("die", "dying"):
+        return "death"
+    if norm.startswith(("pistolaim", "rifleaim", "gunidle", "aimidle")):
         return "aim"
-    if any(token in norm for token in ("pistolshoot", "rifleshoot", "gunshoot", "shoot", "fire")):
+    if norm.startswith(("pistolshoot", "rifleshoot", "gunshoot")):
         return "fire"
-    choices = [
-        ("death", ("death01", "deathloop", "death", "die")),
-        ("walk", ("walkloop", "walkfwdloop", "walkforwardloop", "walkfwd", "walk")),
-        ("jog", ("jogfwdloop", "jogloop", "runfwdloop", "runloop", "jogfwd", "jog", "run", "sprint")),
-        ("idle", ("idleloop", "idle")),
-    ]
-    for label, tokens in choices:
-        if any(norm == token for token in tokens):
-            return label
-    for label, tokens in choices:
-        if any(token in norm for token in tokens):
-            return label
+    if norm.startswith(("jogfwd", "runfwd", "sprint")):
+        return "jog"
+    if norm.startswith(("walkfwd", "walkforward")):
+        return "walk"
     return None
 
 def choose_clips(animations):
