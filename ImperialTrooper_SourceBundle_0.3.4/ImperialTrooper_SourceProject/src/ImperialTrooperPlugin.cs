@@ -26,7 +26,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.10";
+        public const string PluginVersion = "0.3.11";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -182,14 +182,14 @@ namespace ImperialTrooperMod
         {
             string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
             Logger.LogInfo("Loading trooper audio from plugin directory: " + pluginDirectory);
-            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Shot.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Impact.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Radio_ContactFront.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Radio_TargetAcquired.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Radio_MaintainFormation.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Radio_TrooperDown.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Radio_Static.mp3"));
-            yield return LoadAudio(ResolveAudioAssetPath("Comms_Beep.mp3"));
+            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Shot.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Impact.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_ContactFront.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_TargetAcquired.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_MaintainFormation.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_TrooperDown.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Radio_Static.wav"));
+            yield return LoadAudio(ResolveAudioAssetPath("Comms_Beep.wav"));
             int loaded = new AudioClip[] { BlasterShotClip, BlasterImpactClip, RadioContactClip, RadioTargetAcquiredClip,
                 RadioMaintainFormationClip, RadioTrooperDownClip, RadioStaticClip, CommsBeepClip }.Count(c => c != null);
             Logger.LogInfo("Trooper audio initialization finished: " + loaded + "/8 clips loaded. Blaster=" + (BlasterShotClip != null) +
@@ -215,7 +215,7 @@ namespace ImperialTrooperMod
                 yield break;
             }
 
-            using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(uri, AudioType.MPEG))
+            using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(uri, AudioType.WAV))
             {
                 request.timeout = 15;
                 yield return request.SendWebRequest();
@@ -236,15 +236,21 @@ namespace ImperialTrooperMod
 
             string file = IOPath.GetFileName(path);
             loadedClip.name = IOPath.GetFileNameWithoutExtension(file);
-            if (file.Equals("Blaster_Shot.mp3", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = loadedClip;
-            else if (file.Equals("Radio_ContactFront.mp3", StringComparison.OrdinalIgnoreCase)) RadioContactClip = loadedClip;
-            else if (file.Equals("Radio_TargetAcquired.mp3", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = loadedClip;
-            else if (file.Equals("Radio_MaintainFormation.mp3", StringComparison.OrdinalIgnoreCase)) RadioMaintainFormationClip = loadedClip;
-            else if (file.Equals("Radio_TrooperDown.mp3", StringComparison.OrdinalIgnoreCase)) RadioTrooperDownClip = loadedClip;
-            else if (file.Equals("Radio_Static.mp3", StringComparison.OrdinalIgnoreCase)) RadioStaticClip = loadedClip;
-            else if (file.Equals("Comms_Beep.mp3", StringComparison.OrdinalIgnoreCase)) CommsBeepClip = loadedClip;
-            else if (file.Equals("Blaster_Impact.mp3", StringComparison.OrdinalIgnoreCase)) BlasterImpactClip = loadedClip;
-            Logger.LogInfo("Loaded audio: " + file + " (" + loadedClip.length.ToString("0.00") + " sec, " + new FileInfo(path).Length + " bytes).");
+            if (file.Equals("Blaster_Shot.wav", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = loadedClip;
+            else if (file.Equals("Radio_ContactFront.wav", StringComparison.OrdinalIgnoreCase)) RadioContactClip = loadedClip;
+            else if (file.Equals("Radio_TargetAcquired.wav", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = loadedClip;
+            else if (file.Equals("Radio_MaintainFormation.wav", StringComparison.OrdinalIgnoreCase)) RadioMaintainFormationClip = loadedClip;
+            else if (file.Equals("Radio_TrooperDown.wav", StringComparison.OrdinalIgnoreCase)) RadioTrooperDownClip = loadedClip;
+            else if (file.Equals("Radio_Static.wav", StringComparison.OrdinalIgnoreCase)) RadioStaticClip = loadedClip;
+            else if (file.Equals("Comms_Beep.wav", StringComparison.OrdinalIgnoreCase)) CommsBeepClip = loadedClip;
+            else if (file.Equals("Blaster_Impact.wav", StringComparison.OrdinalIgnoreCase)) BlasterImpactClip = loadedClip;
+            if (loadedClip.samples <= 0 || loadedClip.length <= 0.01f)
+            {
+                Logger.LogWarning("Audio clip decoded with zero samples: " + file + " (" + new FileInfo(path).Length + " bytes).");
+                UnityEngine.Object.Destroy(loadedClip);
+                yield break;
+            }
+            Logger.LogInfo("Loaded audio: " + file + " (" + loadedClip.length.ToString("0.00") + " sec, " + loadedClip.samples + " samples, " + new FileInfo(path).Length + " bytes).");
         }
 
         internal static void PlayClip(AudioClip clip, Vector3 position, float volume = 0.7f)
@@ -383,7 +389,7 @@ namespace ImperialTrooperMod
                 }
 
                 TintBoltVisual(BlasterBoltPrefab, "ImperialTrooper_BoltRed");
-                AddBoltTrail(BlasterBoltPrefab);
+                // Keep cloned vanilla visuals; custom shader lookup is unsafe under RoR2 LegacyShaderAPI.
                 foreach (MonoBehaviour behaviour in BlasterBoltPrefab.GetComponents<MonoBehaviour>())
                 {
                     if (behaviour == null) continue;
@@ -399,7 +405,7 @@ namespace ImperialTrooperMod
                 {
                     GameObject ghost = PrefabAPI.InstantiateClone(controller.ghostPrefab, "ImperialTrooperRedBoltGhost", false);
                     TintBoltVisual(ghost, "ImperialTrooper_BoltGhostRed");
-                    AddBoltTrail(ghost);
+                    // Keep the vanilla ghost visual without constructing a custom trail shader.
                     ghost.transform.localScale *= 0.58f;
                     controller.ghostPrefab = ghost;
                 }
@@ -407,7 +413,7 @@ namespace ImperialTrooperMod
                 Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
-                Logger.LogInfo("Registered slow red blaster bolt using " + selectedPath + " (12 m/s, 5 s lifetime).");
+                Logger.LogInfo("Registered slow red blaster bolt using " + selectedPath + " (6.5 m/s, 5 s lifetime).");
             }
             catch (Exception ex)
             {
