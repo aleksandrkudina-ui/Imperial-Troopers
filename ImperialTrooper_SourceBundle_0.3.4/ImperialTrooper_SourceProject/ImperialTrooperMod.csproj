@@ -22,7 +22,7 @@
     <Reference Include="R2API.Addressables"><HintPath>lib/R2API.Addressables.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>
   <ItemGroup>
-    <TrooperAudio Include="Audio/*.mp3" />
+    <TrooperAudio Include="Audio/*.wav" />
     <TrooperModel Include="Assets/Stormtrooper.imodel" />
     <TrooperAnimations Include="Assets/Stormtrooper.ianim" />
     <TrooperAnimationLicense Include="Assets/ANIMATION_LICENSE.txt" />
