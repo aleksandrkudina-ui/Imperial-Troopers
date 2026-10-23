@@ -28,12 +28,13 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.16";
+        public const string PluginVersion = "0.3.17";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
         internal static GameObject BlasterBoltPrefab;
         internal static Material BlasterBoltMaterial;
+        internal const float BlasterBoltSpeed = 36f;
         internal static GameObject[] AudioEffectPrefabs = Array.Empty<GameObject>();
         internal static GameObject TrooperMasterPrefab;
         private static AssetBundle ImportedTrooperAssetBundle;
@@ -565,120 +566,125 @@ namespace ImperialTrooperMod
             return ghost;
         }
 
+        private GameObject ResolveProjectileGhost(ProjectileController controller)
+        {
+            if (controller == null) return null;
+            if (controller.ghostPrefab != null) return controller.ghostPrefab;
+            try
+            {
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+                Type type = controller.GetType();
+                FieldInfo field = null;
+                while (type != null && field == null)
+                {
+                    field = type.GetField("ghostPrefabAddress", flags | BindingFlags.DeclaredOnly);
+                    type = type.BaseType;
+                }
+                object addressReference = field != null ? field.GetValue(controller) : null;
+                PropertyInfo runtimeKeyProperty = addressReference != null ? addressReference.GetType().GetProperty("RuntimeKey", flags) : null;
+                object runtimeKey = runtimeKeyProperty != null ? runtimeKeyProperty.GetValue(addressReference, null) : null;
+                if (runtimeKey != null)
+                {
+                    GameObject loadedGhost = Addressables.LoadAssetAsync<GameObject>(runtimeKey).WaitForCompletion();
+                    if (loadedGhost != null) return loadedGhost;
+                }
+            }
+            catch (Exception ex) { Logger.LogDebug("Could not resolve FMJ ghost address: " + ex.Message); }
+            return null;
+        }
+
         private void ClearProjectileGhostReferences(ProjectileController controller)
         {
             if (controller == null) return;
-
-            // RoR2 1.5 uses an addressable reference for projectile ghosts. Clear both the legacy
-            // GameObject field and the new address field; reflection over reference-type fields alone
-            // left ghostPrefabAddress untouched and could still spawn a vanilla projectile visual.
-            try { controller.ghostPrefab = null; }
-            catch (Exception ex) { Logger.LogDebug("Legacy ghostPrefab clear failed: " + ex.Message); }
-            try { controller.ghostPrefabAddress = null; }
-            catch (Exception ex) { Logger.LogWarning("Could not clear addressable ghostPrefabAddress: " + ex.Message); }
-
-            Logger.LogInfo("Projectile ghost prefab references cleared; red bolt visual is attached to the moving projectile root.");
+            controller.ghostPrefab = null;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            Type type = controller.GetType();
+            while (type != null)
+            {
+                foreach (FieldInfo field in type.GetFields(flags))
+                {
+                    if (!string.Equals(field.Name, "ghostPrefabAddress", StringComparison.OrdinalIgnoreCase) || field.FieldType.IsValueType) continue;
+                    try { field.SetValue(controller, null); }
+                    catch (Exception ex) { Logger.LogDebug("Could not clear ghost address field: " + ex.Message); }
+                }
+                type = type.BaseType;
+            }
         }
 
         private void TryRegisterBlasterBolt()
         {
-            // Never use the Lunar Golem twin-shot prefab: its blue orb and oscillating movement
-            // are visibly wrong for a straight E-11 blaster bolt. Commando's simple grenade projectile
-            // is used only for the collision/damage components; its visual is replaced entirely.
-            // Keep a simple straight-moving projectile body. Do not fall back to Lunar Golem's
-            // oscillating twin-shot at all; that is the exact source of the blue zig-zag spheres.
-            GameObject source = null;
-            string selectedPath = null;
-            selectedPath = "Prefabs/Projectiles/CommandoGrenadeProjectile";
-            source = LegacyResourcesAPI.Load<GameObject>(selectedPath);
-            if (source == null)
-            {
-                Logger.LogWarning("No compatible vanilla projectile prefab found; trooper will use a deliberately inaccurate low-damage hitscan fallback.");
-                return;
-            }
-
             try
             {
-                Material sourceMaterial = FindProjectileMaterial(source);
-                // Commando's grenade projectile has no render material on some game builds. Reuse
-                // the already validated vanilla Commando tracer material instead of failing back
-                // to instantaneous hitscan.
-                if (sourceMaterial == null) sourceMaterial = FindProjectileMaterial(RedTracerPrefab);
-                if (sourceMaterial == null)
-                {
-                    GameObject commandoBody = LegacyResourcesAPI.Load<GameObject>("Prefabs/CharacterBodies/CommandoBody");
-                    sourceMaterial = FindProjectileMaterial(commandoBody);
-                }
-                if (sourceMaterial == null) throw new InvalidOperationException("No material could be recovered from the source projectile, registered tracer, or vanilla Commando body.");
+                // Clone the vanilla straight-moving Commando FMJ projectile so the game keeps its
+                // normal projectile collision, hitbox and direct damage path.
+                GameObject source = Addressables.LoadAssetAsync<GameObject>("RoR2/Base/Commando/FMJRamping.prefab").WaitForCompletion();
+                if (source == null) throw new InvalidOperationException("Addressable FMJRamping projectile prefab returned null.");
+                ProjectileController sourceController = source.GetComponent<ProjectileController>();
+                GameObject sourceGhost = ResolveProjectileGhost(sourceController);
+                if (sourceGhost == null)
+                    sourceGhost = Addressables.LoadAssetAsync<GameObject>("RoR2/Base/Commando/CommandoFMJGhost.prefab").WaitForCompletion();
+                if (sourceGhost == null) sourceGhost = RedTracerPrefab;
 
+                Material sourceMaterial = FindProjectileMaterial(sourceGhost);
+                if (sourceMaterial == null) throw new InvalidOperationException("FMJ ghost/tracer has no material to tint.");
                 if (BlasterBoltMaterial != null) Destroy(BlasterBoltMaterial);
                 BlasterBoltMaterial = new Material(sourceMaterial) { name = "ImperialTrooperRedBoltMaterial" };
                 SetTint(BlasterBoltMaterial, new Color(1f, 0.018f, 0.012f, 1f));
                 if (BlasterBoltMaterial.HasProperty("_EmissionColor"))
                 {
                     BlasterBoltMaterial.EnableKeyword("_EMISSION");
-                    BlasterBoltMaterial.SetColor("_EmissionColor", new Color(1f, 0.006f, 0.002f, 1f) * 4.0f);
+                    BlasterBoltMaterial.SetColor("_EmissionColor", new Color(1f, 0.006f, 0.002f, 1f) * 4f);
                 }
 
                 BlasterBoltPrefab = PrefabAPI.InstantiateClone(source, "ImperialTrooperBlasterBolt", true);
                 ProjectileController controller = BlasterBoltPrefab.GetComponent<ProjectileController>();
-                if (controller == null) controller = BlasterBoltPrefab.AddComponent<ProjectileController>();
+                if (controller == null) throw new InvalidOperationException("FMJ projectile is missing ProjectileController.");
                 ProjectileSimple simple = BlasterBoltPrefab.GetComponent<ProjectileSimple>();
-                if (simple == null) simple = BlasterBoltPrefab.AddComponent<ProjectileSimple>();
-                simple.desiredForwardSpeed = 4.5f;
-                simple.lifetime = 5f;
+                if (simple == null) throw new InvalidOperationException("FMJ projectile is missing ProjectileSimple.");
+                simple.desiredForwardSpeed = BlasterBoltSpeed;
+                simple.lifetime = 2.5f;
                 simple.updateAfterFiring = true;
 
-                ProjectileImpactExplosion impact = BlasterBoltPrefab.GetComponent<ProjectileImpactExplosion>();
-                if (impact != null)
-                {
-                    impact.blastRadius = 0.30f;
-                    impact.blastDamageCoefficient = 1f;
-                    impact.lifetime = 5f;
-                    impact.timerAfterImpact = false;
-                    impact.lifetimeAfterImpact = 0.05f;
-                    impact.destroyOnEnemy = true;
-                }
+                ProjectileOverlapAttack overlap = BlasterBoltPrefab.GetComponent<ProjectileOverlapAttack>();
+                if (overlap == null) throw new InvalidOperationException("FMJ projectile has no ProjectileOverlapAttack; refusing to register a bolt that cannot damage on contact.");
+                overlap.damageCoefficient = 1f;
+                overlap.overlapProcCoefficient = 0.35f;
 
-                // Hide every inherited mesh/renderer so no blue spherical twin-shot can leak through.
+                ProjectileDamage projectileDamage = BlasterBoltPrefab.GetComponent<ProjectileDamage>();
+                if (projectileDamage == null) projectileDamage = BlasterBoltPrefab.AddComponent<ProjectileDamage>();
+                projectileDamage.damage = 1f;
+
+                ProjectileImpactExplosion explosion = BlasterBoltPrefab.GetComponent<ProjectileImpactExplosion>();
+                if (explosion != null) DestroyImmediate(explosion);
+                ProjectileDirectionalTargetFinder finder = BlasterBoltPrefab.GetComponent<ProjectileDirectionalTargetFinder>();
+                if (finder != null) DestroyImmediate(finder);
+                ProjectileSteerTowardTarget steer = BlasterBoltPrefab.GetComponent<ProjectileSteerTowardTarget>();
+                if (steer != null) DestroyImmediate(steer);
+
+                Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
+                if (rb != null)
+                {
+                    rb.useGravity = false;
+                    rb.drag = 0f;
+                    rb.angularDrag = 0f;
+                    rb.velocity = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                }
                 foreach (Renderer renderer in BlasterBoltPrefab.GetComponentsInChildren<Renderer>(true))
                     if (renderer != null) renderer.enabled = false;
 
-                foreach (MonoBehaviour behaviour in BlasterBoltPrefab.GetComponents<MonoBehaviour>())
-                {
-                    if (behaviour == null) continue;
-                    string typeName = behaviour.GetType().Name;
-                    if (typeName.IndexOf("Wobble", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("Steer", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("Homing", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("TargetFinder", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("Wave", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("Oscillat", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("Wander", StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        Behaviour motionBehaviour = behaviour as Behaviour;
-                        if (motionBehaviour != null) motionBehaviour.enabled = false;
-                    }
-                }
-
-                // RoR2 1.5 stores vanilla projectile ghosts as addressable references. Rather
-                // than depending on a missing legacy ghost prefab, render the bolt as a child of the
-                // actual projectile transform; this guarantees a visible moving red bolt on clients.
+                GameObject customGhost = CreateRedBlasterGhost(sourceGhost, BlasterBoltMaterial);
                 ClearProjectileGhostReferences(controller);
-                ImperialTrooperBoltVisual boltVisual = BlasterBoltPrefab.GetComponent<ImperialTrooperBoltVisual>();
-                if (boltVisual == null) boltVisual = BlasterBoltPrefab.AddComponent<ImperialTrooperBoltVisual>();
-                boltVisual.Initialize(BlasterBoltMaterial);
-
-                Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
-                if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
+                controller.ghostPrefab = customGhost;
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
-                Logger.LogInfo("Registered custom straight red E-11 projectile using " + selectedPath +
-                    " (4.5 m/s, 5 s lifetime, root-attached red capsule/trail visual, legacy ghost references cleared).");
+
+                Logger.LogInfo("Registered straight E-11 bolt from FMJRamping: speed=" + BlasterBoltSpeed +
+                    " m/s, lifetime=2.5 s, direct overlap damage enabled, no explosion/wobble/steering components.");
             }
             catch (Exception ex)
             {
                 BlasterBoltPrefab = null;
-                Logger.LogWarning("Custom red blaster bolt setup failed; using low-damage hitscan fallback: " + ex);
+                Logger.LogError("FMJ-based E-11 projectile registration failed; hitscan fallback is disabled: " + ex);
             }
         }
 
@@ -847,6 +853,7 @@ namespace ImperialTrooperMod
             }
             master.name = "ImperialTrooperMaster";
             DisableInheritedAiDrivers(masterPrefab);
+            ConfigureTacticalDrivers(masterPrefab);
             master.bodyPrefab = bodyPrefab;
             TrooperMasterPrefab = masterPrefab;
 
@@ -1132,6 +1139,76 @@ namespace ImperialTrooperMod
             }
             Logger.LogInfo("Master tactical AI setup: found " + found + " inherited AISkillDriver components, disabled " + disabled +
                 "; positional behavior is handled by ImperialTrooperBrain.");
+        }
+
+        private void ConfigureTacticalDrivers(GameObject masterPrefab)
+        {
+            if (masterPrefab == null) return;
+            Assembly gameAssembly = typeof(CharacterBody).Assembly;
+            Type driverType = gameAssembly.GetType("RoR2.CharacterAI.AISkillDriver") ??
+                              gameAssembly.GetType("RoR2.AISkillDriver");
+            if (driverType == null)
+            {
+                Logger.LogError("AISkillDriver type not found; tactical hold-position logic could not be registered.");
+                return;
+            }
+
+            ConfigureTacticalDriver(masterPrefab, driverType, "ImperialRetreat", 0f, 12f, "FleeMoveTarget", false);
+            ConfigureTacticalDriver(masterPrefab, driverType, "ImperialHoldPosition", 12f, 17f, "Stop", false);
+            ConfigureTacticalDriver(masterPrefab, driverType, "ImperialAdvance", 17f, 1000f, "ChaseMoveTarget", false);
+            Logger.LogInfo("Registered tactical AISkillDrivers: retreat below 12 m, hold from 12-17 m, advance beyond 17 m.");
+        }
+
+        private void ConfigureTacticalDriver(GameObject masterPrefab, Type driverType, string name,
+            float minDistance, float maxDistance, string movementType, bool sprint)
+        {
+            Component driver = masterPrefab.AddComponent(driverType);
+            SetAISkillDriverMember(driver, "customName", name);
+            SetAISkillDriverMember(driver, "skillSlot", "None");
+            SetAISkillDriverMember(driver, "requireSkillReady", false);
+            SetAISkillDriverMember(driver, "moveTargetType", "CurrentEnemy");
+            SetAISkillDriverMember(driver, "minDistance", minDistance);
+            SetAISkillDriverMember(driver, "maxDistance", maxDistance);
+            SetAISkillDriverMember(driver, "selectionRequiresTargetLoS", false);
+            SetAISkillDriverMember(driver, "activationRequiresTargetLoS", false);
+            SetAISkillDriverMember(driver, "activationRequiresAimConfirmation", false);
+            SetAISkillDriverMember(driver, "movementType", movementType);
+            SetAISkillDriverMember(driver, "aimType", "AtCurrentEnemy");
+            SetAISkillDriverMember(driver, "ignoreNodeGraph", false);
+            SetAISkillDriverMember(driver, "resetCurrentEnemyOnNextDriverSelection", false);
+            SetAISkillDriverMember(driver, "noRepeat", false);
+            SetAISkillDriverMember(driver, "shouldSprint", sprint);
+        }
+
+        private void SetAISkillDriverMember(Component driver, string name, object value)
+        {
+            if (driver == null || string.IsNullOrEmpty(name)) return;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            Type type = driver.GetType();
+            FieldInfo field = type.GetField(name, flags);
+            if (field != null)
+            {
+                object converted = value;
+                if (field.FieldType.IsEnum && value is string enumValue)
+                    converted = Enum.Parse(field.FieldType, enumValue, true);
+                else if (value != null && !field.FieldType.IsInstanceOfType(value))
+                    converted = Convert.ChangeType(value, field.FieldType);
+                field.SetValue(driver, converted);
+                return;
+            }
+
+            PropertyInfo property = type.GetProperty(name, flags);
+            if (property != null && property.CanWrite)
+            {
+                object converted = value;
+                if (property.PropertyType.IsEnum && value is string enumValue)
+                    converted = Enum.Parse(property.PropertyType, enumValue, true);
+                else if (value != null && !property.PropertyType.IsInstanceOfType(value))
+                    converted = Convert.ChangeType(value, property.PropertyType);
+                property.SetValue(driver, converted, null);
+                return;
+            }
+            Logger.LogWarning("AISkillDriver member '" + name + "' was not found on " + type.FullName + ".");
         }
 
         private void SilenceVanillaSkills(GameObject bodyPrefab)
@@ -1805,9 +1882,6 @@ namespace ImperialTrooperMod
         private float nextBurstShotTime;
         private float nextVoiceTime;
         private float nextTargetScanTime;
-        private float nextLaneChangeTime;
-        private float repositionUntil;
-        private Vector3 repositionDirection;
         private int shotsRemainingInBurst;
         private float assignedPreferredRange;
         private CharacterBody cachedTarget;
@@ -1871,54 +1945,16 @@ namespace ImperialTrooperMod
 
         private void SetMoveVector(Vector3 direction)
         {
-            InputBankTest input = GetComponent<InputBankTest>();
-            if (input == null) return;
-            direction.y = 0f;
-            input.moveVector = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.zero;
+            // BaseAI + AISkillDriver own character movement. Do not write to the same moveVector.
+            GetAnimationPlayer()?.SetMovement(false);
         }
 
         private void UpdateTacticalMovement(InputBankTest input, Vector3 toTarget, float planarDistance, Vector3 origin, Vector3 targetPoint)
         {
+            // The driver ranges decide whether to retreat, hold, or advance. Only pass that intent to
+            // animation; direct InputBankTest writes here used to fight BaseAI and create random turns.
             if (input == null) return;
-            toTarget.y = 0f;
-            if (toTarget.sqrMagnitude < 0.01f)
-            {
-                input.moveVector = Vector3.zero;
-                return;
-            }
-
-            Vector3 movement = Vector3.zero;
-            float retreatAt = Mathf.Max(6.5f, assignedPreferredRange - 3.5f);
-            float advanceAt = assignedPreferredRange + 4.0f;
-            if (planarDistance > advanceAt)
-            {
-                movement = toTarget.normalized;
-                repositionUntil = 0f;
-            }
-            else if (planarDistance < retreatAt)
-            {
-                movement = -toTarget.normalized;
-                repositionUntil = 0f;
-            }
-            else
-            {
-                Vector3 aimVector = targetPoint - origin;
-                float rayLength = aimVector.magnitude;
-                bool blocked = false;
-                if (rayLength > 0.5f)
-                    blocked = Physics.Raycast(origin, aimVector / rayLength, out RaycastHit hit, rayLength - 0.35f, LayerIndex.world.mask);
-
-                // Reposition only if terrain blocks the firing lane, then settle back into a fixed stance.
-                if (blocked && Time.time >= nextLaneChangeTime && Time.time >= repositionUntil)
-                {
-                    float side = UnityEngine.Random.value < 0.5f ? -1f : 1f;
-                    repositionDirection = Vector3.Cross(Vector3.up, toTarget.normalized) * side;
-                    repositionUntil = Time.time + UnityEngine.Random.Range(0.45f, 0.75f);
-                    nextLaneChangeTime = Time.time + UnityEngine.Random.Range(2.8f, 4.2f);
-                }
-                if (Time.time < repositionUntil) movement = repositionDirection;
-            }
-            input.moveVector = movement.sqrMagnitude > 0.0001f ? movement.normalized : Vector3.zero;
+            GetAnimationPlayer()?.SetMovement(planarDistance < 12f || planarDistance > 17f);
         }
 
         private void FixedUpdate()
@@ -1979,7 +2015,8 @@ namespace ImperialTrooperMod
             }
             if (shotsRemainingInBurst > 0 && Time.time >= nextBurstShotTime)
             {
-                FireBlaster(origin, aim.normalized);
+                bool firstShotInBurst = shotsRemainingInBurst == Mathf.Clamp(BurstShotCount, 1, 5);
+                FireBlaster(origin, aim.normalized, firstShotInBurst);
                 shotsRemainingInBurst--;
                 if (shotsRemainingInBurst > 0)
                     nextBurstShotTime = Time.time + Mathf.Max(0.12f, BurstShotInterval);
@@ -2030,63 +2067,38 @@ namespace ImperialTrooperMod
             return best;
         }
 
-        private void FireBlaster(Vector3 origin, Vector3 direction)
+        private void FireBlaster(Vector3 origin, Vector3 direction, bool playBurstSound)
         {
             if (body == null || !body || body.healthComponent == null || !body.healthComponent.alive) return;
+            if (ImperialTrooperPlugin.BlasterBoltPrefab == null) return;
             GetAnimationPlayer()?.PlayShot();
 
-            // The projectile is deliberately slow enough to dodge at medium range; random angular error
-            // prevents laser-perfect tracking. We still keep a safe low-damage fallback if a game build
-            // does not expose either vanilla projectile prefab.
             Quaternion aimRotation = Quaternion.LookRotation(direction);
             Vector3 shotDirection = aimRotation * Quaternion.Euler(
                 UnityEngine.Random.Range(-SpreadDegrees, SpreadDegrees),
                 UnityEngine.Random.Range(-SpreadDegrees, SpreadDegrees), 0f) * Vector3.forward;
-            float shotDamage = body.damage * 0.55f;
+            float shotDamage = body.damage * 0.75f;
             bool critical = Util.CheckRoll(body.crit * 0.25f, body.master);
-
-            if (ImperialTrooperPlugin.BlasterBoltPrefab != null)
+            FireProjectileInfo info = new FireProjectileInfo
             {
-                FireProjectileInfo info = new FireProjectileInfo
-                {
-                    projectilePrefab = ImperialTrooperPlugin.BlasterBoltPrefab,
-                    position = origin,
-                    rotation = Quaternion.LookRotation(shotDirection),
-                    owner = gameObject,
-                    damage = shotDamage,
-                    force = 3f,
-                    crit = critical,
-                    damageColorIndex = DamageColorIndex.Default,
-                    useSpeedOverride = true,
-                    speedOverride = 4.5f
-                };
-                ProjectileManager.instance.FireProjectile(info);
-            }
-            else
-            {
-                BulletAttack attack = new BulletAttack
-                {
-                    owner = gameObject,
-                    weapon = gameObject,
-                    origin = origin,
-                    aimVector = shotDirection,
-                    bulletCount = 1,
-                    damage = shotDamage,
-                    force = 3f,
-                    procCoefficient = 0.35f,
-                    radius = 0.18f,
-                    minSpread = 0f,
-                    maxSpread = SpreadDegrees,
-                    falloffModel = BulletAttack.FalloffModel.DefaultBullet,
-                    tracerEffectPrefab = ImperialTrooperPlugin.RedTracerPrefab,
-                    isCrit = critical,
-                    smartCollision = true,
-                    stopperMask = LayerIndex.world.mask
-                };
-                attack.Fire();
-            }
+                projectilePrefab = ImperialTrooperPlugin.BlasterBoltPrefab,
+                position = origin,
+                rotation = Quaternion.LookRotation(shotDirection),
+                owner = gameObject,
+                damage = shotDamage,
+                force = 10f,
+                crit = critical,
+                damageColorIndex = DamageColorIndex.Default,
+                useSpeedOverride = true,
+                speedOverride = ImperialTrooperPlugin.BlasterBoltSpeed
+            };
+            ProjectileManager.instance.FireProjectile(info);
 
-            ImperialTrooperPlugin.PlayClip(ImperialTrooperPlugin.BlasterShotClip, origin, 0.72f);
+            // Use the actual burst cue once per three-shot sequence; don't replay the short single
+            // mechanical click on every projectile.
+            if (playBurstSound)
+                ImperialTrooperPlugin.PlayClip(ImperialTrooperPlugin.BlasterBurstClip != null
+                    ? ImperialTrooperPlugin.BlasterBurstClip : ImperialTrooperPlugin.BlasterShotClip, origin, 0.78f);
         }
     }
 }

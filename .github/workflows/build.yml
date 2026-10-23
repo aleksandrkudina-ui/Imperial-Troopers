@@ -34,7 +34,7 @@ jobs:
           New-Item -ItemType Directory -Path $assetDirectory -Force | Out-Null
           $animationSource = Join-Path $assetDirectory "UAL1_Standard.glb"
           $animationSourceUrl = "https://raw.githubusercontent.com/Barbatos6669/elderforge/bb2ce469f0ab2ccfc487faef55550ba07fae2483/assets/animations/universal_animation_library_1/UAL1_Standard.glb"
-          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.16" }
+          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.17" }
           if (!(Test-Path $animationSource) -or (Get-Item $animationSource).Length -lt 1000000) { throw "Pinned CC0 UAL1 Standard GLB download is missing or unexpectedly small" }
           Write-Host ("Using pinned CC0 Quaternius UAL1 source from " + $animationSourceUrl + " (" + (Get-Item $animationSource).Length + " bytes)")
           $animationSourceFile = Get-Item $animationSource
@@ -89,7 +89,7 @@ jobs:
 
           $manifest = @{
             name = "ImperialTroopers"
-            version_number = "0.3.16"
+            version_number = "0.3.17"
             website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
             description = "Risk of Rain 2 enemy mod adding Imperial troopers with blaster burst fire, tactical positioning, skeletal animations and radio chatter."
             dependencies = @(
@@ -120,7 +120,7 @@ jobs:
           '@
           [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
 
-          $zipPath = "PyramidHead-ImperialTroopers-0.3.16.zip"
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.17.zip"
           Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
           if (!(Test-Path $zipPath)) { throw "Thunderstore package ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -140,9 +140,9 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.16-package
+          name: ImperialTroopers-0.3.17-package
           path: |
-            PyramidHead-ImperialTroopers-0.3.16.zip
+            PyramidHead-ImperialTroopers-0.3.17.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
