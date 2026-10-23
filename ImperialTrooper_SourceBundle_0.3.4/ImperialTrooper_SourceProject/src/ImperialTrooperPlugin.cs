@@ -27,7 +27,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.15";
+        public const string PluginVersion = "0.3.16";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -546,53 +546,16 @@ namespace ImperialTrooperMod
         private void ClearProjectileGhostReferences(ProjectileController controller)
         {
             if (controller == null) return;
-            int cleared = 0;
-            bool foundGhostMember = false;
-            Type type = controller.GetType();
-            while (type != null)
-            {
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
-                foreach (FieldInfo field in type.GetFields(flags))
-                {
-                    if (field.Name.IndexOf("ghostPrefab", StringComparison.OrdinalIgnoreCase) < 0) continue;
-                    foundGhostMember = true;
-                    if (field.FieldType.IsValueType) continue;
-                    try
-                    {
-                        if (field.GetValue(controller) != null)
-                        {
-                            field.SetValue(controller, null);
-                            cleared++;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogDebug("Could not clear projectile ghost field " + field.Name + ": " + ex.Message);
-                    }
-                }
-                foreach (PropertyInfo property in type.GetProperties(flags))
-                {
-                    if (property.Name.IndexOf("ghostPrefab", StringComparison.OrdinalIgnoreCase) < 0 ||
-                        property.GetIndexParameters().Length != 0 || property.GetSetMethod(true) == null) continue;
-                    foundGhostMember = true;
-                    if (property.PropertyType.IsValueType) continue;
-                    try
-                    {
-                        if (property.GetValue(controller, null) != null)
-                        {
-                            property.GetSetMethod(true).Invoke(controller, new object[] { null });
-                            cleared++;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogDebug("Could not clear projectile ghost property " + property.Name + ": " + ex.Message);
-                    }
-                }
-                type = type.BaseType;
-            }
-            Logger.LogInfo("Projectile ghost reference cleanup: foundMember=" + foundGhostMember + ", cleared=" + cleared +
-                "; the red bolt visual is attached directly to the moving projectile.");
+
+            // RoR2 1.5 uses an addressable reference for projectile ghosts. Clear both the legacy
+            // GameObject field and the new address field; reflection over reference-type fields alone
+            // left ghostPrefabAddress untouched and could still spawn a vanilla projectile visual.
+            try { controller.ghostPrefab = null; }
+            catch (Exception ex) { Logger.LogDebug("Legacy ghostPrefab clear failed: " + ex.Message); }
+            try { controller.ghostPrefabAddress = null; }
+            catch (Exception ex) { Logger.LogWarning("Could not clear addressable ghostPrefabAddress: " + ex.Message); }
+
+            Logger.LogInfo("Projectile ghost prefab references cleared; red bolt visual is attached to the moving projectile root.");
         }
 
         private void TryRegisterBlasterBolt()
@@ -1599,7 +1562,21 @@ namespace ImperialTrooperMod
 
         private void EnsureVisual()
         {
-            if (prepared) return;
+            Transform clonedCore = transform.Find("ImperialTrooperRedBoltCore");
+            TrailRenderer clonedTrail = GetComponent<TrailRenderer>();
+            bool coreBelongsToThisProjectile = coreObject != null &&
+                (coreObject.transform == transform || coreObject.transform.IsChildOf(transform));
+            if (prepared && coreBelongsToThisProjectile && clonedTrail != null)
+            {
+                trail = clonedTrail;
+                return;
+            }
+
+            // Runtime-only references cached while configuring the prefab can point back to the
+            // prefab after InstantiateClone. Re-resolve the core and trail on each actual projectile.
+            prepared = false;
+            coreObject = clonedCore != null ? clonedCore.gameObject : null;
+            trail = clonedTrail;
             Material material = boltMaterial != null ? boltMaterial : ImperialTrooperPlugin.BlasterBoltMaterial;
             if (material == null)
             {
