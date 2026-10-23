@@ -27,7 +27,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.13";
+        public const string PluginVersion = "0.3.14";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -37,7 +37,7 @@ namespace ImperialTrooperMod
         private static AssetBundle ImportedTrooperAssetBundle;
         private static GameObject ImportedTrooperModelPrefab;
         private static ImperialTrooperRuntimeModelData RuntimeTrooperModelData;
-        private static ImperialTrooperAnimationSet RuntimeTrooperAnimationSet;
+        internal static ImperialTrooperAnimationSet RuntimeTrooperAnimationSet;
         internal static AudioClip BlasterShotClip;
         internal static AudioClip RadioContactClip;
         internal static AudioClip RadioTargetAcquiredClip;
@@ -199,119 +199,6 @@ namespace ImperialTrooperMod
                 ", trooper-down voice=" + (RadioTrooperDownClip != null) + ".");
         }
 
-        private static AudioClip DecodePcmWav(string path)
-        {
-            byte[] bytes = File.ReadAllBytes(path);
-            if (bytes.Length < 44 ||
-                Encoding.ASCII.GetString(bytes, 0, 4) != "RIFF" ||
-                Encoding.ASCII.GetString(bytes, 8, 4) != "WAVE")
-                throw new InvalidDataException("File is not a valid RIFF/WAVE container.");
-
-            ushort format = 0;
-            ushort channels = 0;
-            ushort bitsPerSample = 0;
-            int sampleRate = 0;
-            int dataOffset = -1;
-            int dataLength = 0;
-
-            int offset = 12;
-            while (offset + 8 <= bytes.Length)
-            {
-                string chunkId = Encoding.ASCII.GetString(bytes, offset, 4);
-                uint chunkSizeUnsigned = BitConverter.ToUInt32(bytes, offset + 4);
-                if (chunkSizeUnsigned > int.MaxValue) throw new InvalidDataException("WAV chunk is too large.");
-                int chunkSize = (int)chunkSizeUnsigned;
-                int chunkData = offset + 8;
-                if (chunkData < 0 || chunkSize < 0 || chunkData + (long)chunkSize > bytes.Length)
-                    throw new InvalidDataException("WAV chunk extends beyond the file.");
-
-                if (chunkId == "fmt ")
-                {
-                    if (chunkSize < 16) throw new InvalidDataException("WAV fmt chunk is too short.");
-                    format = BitConverter.ToUInt16(bytes, chunkData);
-                    channels = BitConverter.ToUInt16(bytes, chunkData + 2);
-                    sampleRate = checked((int)BitConverter.ToUInt32(bytes, chunkData + 4));
-                    bitsPerSample = BitConverter.ToUInt16(bytes, chunkData + 14);
-                }
-                else if (chunkId == "data")
-                {
-                    dataOffset = chunkData;
-                    dataLength = chunkSize;
-                }
-
-                offset = chunkData + chunkSize + (chunkSize & 1);
-            }
-
-            if (format != 1 && !(format == 3 && bitsPerSample == 32))
-                throw new InvalidDataException("Unsupported WAV encoding " + format + "; expected PCM integer or 32-bit float.");
-            if (channels < 1 || channels > 8 || sampleRate < 8000 || sampleRate > 192000)
-                throw new InvalidDataException("Invalid WAV channel count or sample rate.");
-            if (dataOffset < 0 || dataLength <= 0) throw new InvalidDataException("WAV has no non-empty data chunk.");
-            if (bitsPerSample != 8 && bitsPerSample != 16 && bitsPerSample != 24 && bitsPerSample != 32)
-                throw new InvalidDataException("Unsupported WAV bit depth " + bitsPerSample + ".");
-            if (format == 3 && bitsPerSample != 32)
-                throw new InvalidDataException("Only 32-bit float WAV is supported for float encoding.");
-
-            int bytesPerSample = bitsPerSample / 8;
-            int interleavedSampleCount = dataLength / bytesPerSample;
-            int usableSampleCount = interleavedSampleCount - (interleavedSampleCount % channels);
-            if (usableSampleCount <= 0) throw new InvalidDataException("WAV data chunk contains no complete audio frames.");
-            float[] samples = new float[usableSampleCount];
-
-            for (int i = 0; i < usableSampleCount; i++)
-            {
-                int sampleOffset = dataOffset + i * bytesPerSample;
-                float value;
-                if (format == 3)
-                {
-                    value = BitConverter.ToSingle(bytes, sampleOffset);
-                }
-                else if (bitsPerSample == 8)
-                {
-                    value = (bytes[sampleOffset] - 128) / 128f;
-                }
-                else if (bitsPerSample == 16)
-                {
-                    value = BitConverter.ToInt16(bytes, sampleOffset) / 32768f;
-                }
-                else if (bitsPerSample == 24)
-                {
-                    int integer = bytes[sampleOffset] | (bytes[sampleOffset + 1] << 8) | (bytes[sampleOffset + 2] << 16);
-                    if ((integer & 0x800000) != 0) integer |= unchecked((int)0xFF000000);
-                    value = integer / 8388608f;
-                }
-                else
-                {
-                    value = BitConverter.ToInt32(bytes, sampleOffset) / 2147483648f;
-                }
-
-                samples[i] = float.IsNaN(value) || float.IsInfinity(value) ? 0f : Mathf.Clamp(value, -1f, 1f);
-            }
-
-            int frames = usableSampleCount / channels;
-
-            // Fill a non-streaming AudioClip through Unity's documented PCM reader callback.
-            // SetData returned false on this game's Unity runtime even for valid mono WAV files.
-            // With stream=false Unity invokes this callback once while creating the resident clip,
-            // so it remains reusable for overlapping blaster shots and radio chatter.
-            AudioClip.PCMReaderCallback readPcm = output =>
-            {
-                Array.Clear(output, 0, output.Length);
-                int copyCount = Math.Min(output.Length, usableSampleCount);
-                if (copyCount > 0) Array.Copy(samples, 0, output, 0, copyCount);
-            };
-            AudioClip clip = AudioClip.Create(IOPath.GetFileNameWithoutExtension(path),
-                frames, channels, sampleRate, false, readPcm);
-            if (clip == null)
-                throw new InvalidDataException("Unity failed to create an AudioClip from PCM sample data.");
-            if (clip.samples <= 0 || clip.length <= 0.01f)
-            {
-                UnityEngine.Object.Destroy(clip);
-                throw new InvalidDataException("Unity created an empty audio clip from PCM sample data.");
-            }
-            return clip;
-        }
-
         private IEnumerator LoadAudio(string path)
         {
             if (!File.Exists(path))
@@ -320,18 +207,45 @@ namespace ImperialTrooperMod
                 yield break;
             }
 
-            AudioClip loadedClip;
-            try
-            {
-                loadedClip = DecodePcmWav(path);
-            }
+            string uri;
+            try { uri = new Uri(IOPath.GetFullPath(path)).AbsoluteUri; }
             catch (Exception ex)
             {
-                Logger.LogWarning("Could not decode PCM WAV " + IOPath.GetFileName(path) + ": " + ex.Message);
+                Logger.LogWarning("Could not create audio file URI for " + path + ": " + ex.Message);
+                yield break;
+            }
+
+            AudioClip loadedClip = null;
+            using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(uri, AudioType.WAV))
+            {
+                request.timeout = 20;
+                yield return request.SendWebRequest();
+
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    Logger.LogWarning("Unity WAV decoder failed for " + IOPath.GetFileName(path) + " (" + uri + "): " + request.error);
+                    yield break;
+                }
+
+                loadedClip = DownloadHandlerAudioClip.GetContent(request);
+            }
+
+            // DownloadHandlerAudioClip owns WAV parsing; don't treat a non-null but empty clip as loaded.
+            if (loadedClip == null || loadedClip.samples <= 0 || loadedClip.length <= 0.01f)
+            {
+                int samples = loadedClip != null ? loadedClip.samples : 0;
+                float length = loadedClip != null ? loadedClip.length : 0f;
+                int frequency = loadedClip != null ? loadedClip.frequency : 0;
+                int channels = loadedClip != null ? loadedClip.channels : 0;
+                Logger.LogWarning("Unity WAV decoder returned an empty clip for " + IOPath.GetFileName(path) +
+                    ": length=" + length.ToString("0.000") + " s, samples=" + samples +
+                    ", channels=" + channels + ", frequency=" + frequency + " Hz.");
+                if (loadedClip != null) UnityEngine.Object.Destroy(loadedClip);
                 yield break;
             }
 
             string file = IOPath.GetFileName(path);
+            loadedClip.name = IOPath.GetFileNameWithoutExtension(file);
             if (file.Equals("Blaster_Shot.wav", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = loadedClip;
             else if (file.Equals("Radio_ContactFront.wav", StringComparison.OrdinalIgnoreCase)) RadioContactClip = loadedClip;
             else if (file.Equals("Radio_TargetAcquired.wav", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = loadedClip;
@@ -341,8 +255,9 @@ namespace ImperialTrooperMod
             else if (file.Equals("Comms_Beep.wav", StringComparison.OrdinalIgnoreCase)) CommsBeepClip = loadedClip;
             else if (file.Equals("Blaster_Impact.wav", StringComparison.OrdinalIgnoreCase)) BlasterImpactClip = loadedClip;
 
-            Logger.LogInfo("Decoded PCM WAV: " + file + " (" + loadedClip.length.ToString("0.00") + " sec, " +
-                loadedClip.samples + " frames/channel, " + loadedClip.channels + " channels, " + loadedClip.frequency + " Hz).");
+            Logger.LogInfo("Loaded decoded WAV: " + file + " (" + loadedClip.length.ToString("0.00") +
+                " sec, " + loadedClip.samples + " frames/channel, " + loadedClip.channels +
+                " channels, " + loadedClip.frequency + " Hz).");
         }
 
         internal static void PlayClip(AudioClip clip, Vector3 position, float volume = 0.7f)
@@ -554,17 +469,12 @@ namespace ImperialTrooperMod
             // Never use the Lunar Golem twin-shot prefab: its blue orb and oscillating movement
             // are visibly wrong for a straight E-11 blaster bolt. Commando's simple grenade projectile
             // is used only for the collision/damage components; its visual is replaced entirely.
-            string[] candidates = {
-                "Prefabs/Projectiles/CommandoGrenadeProjectile",
-                "Prefabs/Projectiles/LunarGolemTwinShotProjectile"
-            };
+            // Keep a simple straight-moving projectile body. Do not fall back to Lunar Golem's
+            // oscillating twin-shot at all; that is the exact source of the blue zig-zag spheres.
             GameObject source = null;
             string selectedPath = null;
-            foreach (string candidatePath in candidates)
-            {
-                source = LegacyResourcesAPI.Load<GameObject>(candidatePath);
-                if (source != null) { selectedPath = candidatePath; break; }
-            }
+            selectedPath = "Prefabs/Projectiles/CommandoGrenadeProjectile";
+            source = LegacyResourcesAPI.Load<GameObject>(selectedPath);
             if (source == null)
             {
                 Logger.LogWarning("No compatible vanilla projectile prefab found; trooper will use a deliberately inaccurate low-damage hitscan fallback.");
@@ -626,23 +536,19 @@ namespace ImperialTrooperMod
                     }
                 }
 
-                ProjectileController sourceController = source.GetComponent<ProjectileController>();
-                GameObject ghostTemplate = sourceController != null ? sourceController.ghostPrefab : null;
+                // Current RoR2 versions no longer populate every vanilla ProjectileController.ghostPrefab
+                // reference directly. Use our already cloned/tinted Commando tracer as a local ghost
+                // template instead of depending on a vanilla projectile's legacy ghost field.
+                GameObject ghostTemplate = RedTracerPrefab;
                 if (ghostTemplate == null)
-                {
-                    GameObject lunarSource = LegacyResourcesAPI.Load<GameObject>("Prefabs/Projectiles/LunarGolemTwinShotProjectile");
-                    ProjectileController lunarController = lunarSource != null ? lunarSource.GetComponent<ProjectileController>() : null;
-                    if (lunarController != null) ghostTemplate = lunarController.ghostPrefab;
-                }
-                if (ghostTemplate == null)
-                    throw new InvalidOperationException("No vanilla projectile ghost prefab was available to clone.");
+                    throw new InvalidOperationException("The vanilla Commando tracer prefab was unavailable; refusing to fall back to instant hitscan.");
                 controller.ghostPrefab = CreateRedBlasterGhost(ghostTemplate, sourceMaterial);
 
                 Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
                 Logger.LogInfo("Registered custom straight red E-11 bolt using " + selectedPath +
-                    " (4.5 m/s, 5 s lifetime, custom red capsule/trail ghost; vanilla source renderers disabled).");
+                    " (4.5 m/s, 5 s lifetime, red Commando-tracer-derived capsule/trail ghost; no Lunar Golem motion).");
             }
             catch (Exception ex)
             {
