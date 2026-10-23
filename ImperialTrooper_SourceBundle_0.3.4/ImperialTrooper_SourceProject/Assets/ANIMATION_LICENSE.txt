@@ -1,0 +1,9 @@
+Imperial Troopers - Animation Data Source
+
+The generated Stormtrooper.ianim animation data is retargeted from the Quaternius Universal Animation Library (Standard), authored by Quaternius.
+Source page: https://quaternius.com/packs/universalanimationlibrary.html
+Download source used by the automated build: https://github.com/Khyretos/kk-engine/tree/6e8521a373664d842541b7af4e3d1c89978a591e/assets/animations/UAL1_Standard.fbx
+
+The Universal Animation Library is marked CC0 1.0 on the publisher's asset page and is described as free for personal, educational, and commercial projects. CC0 1.0: https://creativecommons.org/publicdomain/zero/1.0/
+
+The upstream FBX is downloaded only by the build workflow; it is not included in the mod ZIP. The packaged .ianim contains sampled, retargeted skeletal transform keys.
