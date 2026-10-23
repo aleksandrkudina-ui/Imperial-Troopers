@@ -673,9 +673,13 @@ namespace ImperialTrooperMod
                 foreach (Renderer renderer in BlasterBoltPrefab.GetComponentsInChildren<Renderer>(true))
                     if (renderer != null) renderer.enabled = false;
 
-                GameObject customGhost = CreateRedBlasterGhost(sourceGhost, BlasterBoltMaterial);
+                // RoR2 1.5 may ignore the legacy GameObject ghost reference on clients. Keep the
+                // projectile's visible red bolt attached to the moving projectile prefab itself.
+                // This is also a robust fallback if the addressable ghost changes between game builds.
                 ClearProjectileGhostReferences(controller);
-                controller.ghostPrefab = customGhost;
+                ImperialTrooperBoltVisual boltVisual = BlasterBoltPrefab.GetComponent<ImperialTrooperBoltVisual>();
+                if (boltVisual == null) boltVisual = BlasterBoltPrefab.AddComponent<ImperialTrooperBoltVisual>();
+                boltVisual.Initialize(BlasterBoltMaterial);
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
 
                 Logger.LogInfo("Registered straight E-11 bolt from FMJRamping: speed=" + BlasterBoltSpeed +
@@ -2071,7 +2075,7 @@ namespace ImperialTrooperMod
         {
             if (body == null || !body || body.healthComponent == null || !body.healthComponent.alive) return;
             if (ImperialTrooperPlugin.BlasterBoltPrefab == null) return;
-            GetAnimationPlayer()?.PlayShot();
+            if (playBurstSound) GetAnimationPlayer()?.PlayShot();
 
             Quaternion aimRotation = Quaternion.LookRotation(direction);
             Vector3 shotDirection = aimRotation * Quaternion.Euler(
