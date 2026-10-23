@@ -251,7 +251,7 @@ namespace ImperialTrooperMod
             if (speed > 4.0f && jog != null) next = jog;
             else if (speed > 0.35f && walk != null) next = walk;
             else if (inCombat && aim != null) next = aim;
-            else next = idle ?? walk ?? jog ?? death;
+            else next = aim ?? idle ?? walk ?? jog ?? death;
 
             if (next == null) return;
             if (current != next)
