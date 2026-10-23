@@ -367,7 +367,7 @@ namespace ImperialTrooperMod
                 if (controller == null) controller = BlasterBoltPrefab.AddComponent<ProjectileController>();
                 ProjectileSimple simple = BlasterBoltPrefab.GetComponent<ProjectileSimple>();
                 if (simple == null) simple = BlasterBoltPrefab.AddComponent<ProjectileSimple>();
-                simple.desiredForwardSpeed = 12f;
+                simple.desiredForwardSpeed = 6.5f;
                 simple.lifetime = 5f;
                 simple.updateAfterFiring = true;
 
@@ -1388,17 +1388,26 @@ namespace ImperialTrooperMod
         }
     }
 
+    [DefaultExecutionOrder(10000)]
     public sealed class ImperialTrooperBrain : MonoBehaviour
     {
-        public float DetectionRange = 22f;
-        public float FireInterval = 2.3f;
-        public float PreferredRange = 11f;
-        public float SpreadDegrees = 8f;
+        public float DetectionRange = 32f;
+        public float FireInterval = 1.65f;
+        public float PreferredRange = 13f;
+        public float SpreadDegrees = 2.7f;
+        public int BurstShotCount = 3;
+        public float BurstShotInterval = 0.24f;
         private CharacterBody body;
         private Transform muzzle;
         private float nextShotTime;
+        private float nextBurstShotTime;
         private float nextVoiceTime;
         private float nextTargetScanTime;
+        private float nextLaneChangeTime;
+        private float repositionUntil;
+        private Vector3 repositionDirection;
+        private int shotsRemainingInBurst;
+        private float assignedPreferredRange;
         private CharacterBody cachedTarget;
         private bool previouslyHadTarget;
         private ImperialTrooperAnimationPlayer animationPlayer;
@@ -1409,8 +1418,10 @@ namespace ImperialTrooperMod
         {
             body = GetComponent<CharacterBody>();
             CacheAnimationPlayer();
-            nextShotTime = Time.time + UnityEngine.Random.Range(0.6f, 1.8f);
-            nextVoiceTime = Time.time + UnityEngine.Random.Range(0.2f, 1.2f);
+            assignedPreferredRange = PreferredRange + UnityEngine.Random.Range(-1.6f, 1.6f);
+            nextShotTime = Time.time + UnityEngine.Random.Range(0.7f, 1.6f);
+            nextBurstShotTime = nextShotTime;
+            nextVoiceTime = Time.time + UnityEngine.Random.Range(0.6f, 1.7f);
             SilenceCopiedSkillStocks();
             if (muzzle == null)
             {
@@ -1440,6 +1451,72 @@ namespace ImperialTrooperMod
                 skill.stock = 0;
                 skill.enabled = false;
             }
+
+            // Disable copied Commando roam/strafing drivers; the custom brain supplies movement vectors.
+            int disabledDrivers = 0;
+            foreach (Component component in GetComponentsInChildren<Component>(true))
+            {
+                if (component == null || component.GetType().Name != "AISkillDriver") continue;
+                Behaviour behaviour = component as Behaviour;
+                if (behaviour != null && behaviour.enabled)
+                {
+                    behaviour.enabled = false;
+                    disabledDrivers++;
+                }
+            }
+            ImperialTrooperPlugin.LogSource?.LogInfo("Disabled " + disabledDrivers + " inherited AISkillDriver components; tactical positioning is active.");
+        }
+
+        private void SetMoveVector(Vector3 direction)
+        {
+            InputBankTest input = GetComponent<InputBankTest>();
+            if (input == null) return;
+            direction.y = 0f;
+            input.moveVector = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.zero;
+        }
+
+        private void UpdateTacticalMovement(InputBankTest input, Vector3 toTarget, float planarDistance, Vector3 origin, Vector3 targetPoint)
+        {
+            if (input == null) return;
+            toTarget.y = 0f;
+            if (toTarget.sqrMagnitude < 0.01f)
+            {
+                input.moveVector = Vector3.zero;
+                return;
+            }
+
+            Vector3 movement = Vector3.zero;
+            float retreatAt = Mathf.Max(6.5f, assignedPreferredRange - 3.5f);
+            float advanceAt = assignedPreferredRange + 4.0f;
+            if (planarDistance > advanceAt)
+            {
+                movement = toTarget.normalized;
+                repositionUntil = 0f;
+            }
+            else if (planarDistance < retreatAt)
+            {
+                movement = -toTarget.normalized;
+                repositionUntil = 0f;
+            }
+            else
+            {
+                Vector3 aimVector = targetPoint - origin;
+                float rayLength = aimVector.magnitude;
+                bool blocked = false;
+                if (rayLength > 0.5f)
+                    blocked = Physics.Raycast(origin, aimVector / rayLength, out RaycastHit hit, rayLength - 0.35f, LayerIndex.world.mask);
+
+                // Reposition only if terrain blocks the firing lane, then settle back into a fixed stance.
+                if (blocked && Time.time >= nextLaneChangeTime && Time.time >= repositionUntil)
+                {
+                    float side = UnityEngine.Random.value < 0.5f ? -1f : 1f;
+                    repositionDirection = Vector3.Cross(Vector3.up, toTarget.normalized) * side;
+                    repositionUntil = Time.time + UnityEngine.Random.Range(0.45f, 0.75f);
+                    nextLaneChangeTime = Time.time + UnityEngine.Random.Range(2.8f, 4.2f);
+                }
+                if (Time.time < repositionUntil) movement = repositionDirection;
+            }
+            input.moveVector = movement.sqrMagnitude > 0.0001f ? movement.normalized : Vector3.zero;
         }
 
         private void FixedUpdate()
@@ -1559,7 +1636,7 @@ namespace ImperialTrooperMod
                     crit = critical,
                     damageColorIndex = DamageColorIndex.Default,
                     useSpeedOverride = true,
-                    speedOverride = 12f
+                    speedOverride = 6.5f
                 };
                 ProjectileManager.instance.FireProjectile(info);
             }
