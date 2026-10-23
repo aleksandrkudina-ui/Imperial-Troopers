@@ -281,11 +281,15 @@ def choose_clips(animations):
         if label and duration >= 0.15:
             score = 0
             normalized = "".join(ch.lower() for ch in name if ch.isalnum())
-            if label == "idle" and "loop" in normalized: score += 10
-            if label == "walk" and "loop" in normalized: score += 10
-            if label == "jog" and "fwd" in normalized: score += 10
-            if label == "jog" and "loop" in normalized: score += 5
-            if label == "death" and "01" in normalized: score += 5
+            if label == "idle" and normalized == "idleloop": score += 20
+            if label == "walk" and normalized == "walkloop": score += 20
+            if label == "jog" and normalized == "jogfwdloop": score += 20
+            if label == "jog" and "runfwdloop" in normalized: score += 10
+            if label == "aim" and "pistolidleloop" in normalized: score += 30
+            if label == "aim" and "rifleidleloop" in normalized: score += 30
+            if label == "aim" and "neutral" in normalized: score += 5
+            if label == "fire" and normalized == "pistolshoot": score += 10
+            if label == "death" and normalized == "death01": score += 10
             if label not in candidates or score > candidates[label][0]:
                 candidates[label] = (score, anim, duration)
     required = ("idle", "walk", "jog", "death")
