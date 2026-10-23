@@ -586,6 +586,7 @@ namespace ImperialTrooperMod
                 return;
             }
             master.name = "ImperialTrooperMaster";
+            DisableInheritedAiDrivers(masterPrefab);
             master.bodyPrefab = bodyPrefab;
             TrooperMasterPrefab = masterPrefab;
 
@@ -835,6 +836,26 @@ namespace ImperialTrooperMod
             Renderer renderer = part.GetComponent<Renderer>();
             if (renderer != null) renderer.sharedMaterial = material;
             return part;
+        }
+
+        private void DisableInheritedAiDrivers(GameObject masterPrefab)
+        {
+            if (masterPrefab == null) return;
+            int found = 0;
+            int disabled = 0;
+            foreach (Component component in masterPrefab.GetComponentsInChildren<Component>(true))
+            {
+                if (component == null || component.GetType().Name != "AISkillDriver") continue;
+                found++;
+                Behaviour behaviour = component as Behaviour;
+                if (behaviour != null && behaviour.enabled)
+                {
+                    behaviour.enabled = false;
+                    disabled++;
+                }
+            }
+            Logger.LogInfo("Master tactical AI setup: found " + found + " inherited AISkillDriver components, disabled " + disabled +
+                "; positional behavior is handled by ImperialTrooperBrain.");
         }
 
         private void SilenceVanillaSkills(GameObject bodyPrefab)
