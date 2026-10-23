@@ -136,6 +136,11 @@ namespace ImperialTrooperMod
         private float actionEndTime;
         private bool inCombat;
         private bool deathStarted;
+        private bool loggedFirstPose;
+        private Transform leftArmProbe;
+        private Transform rightArmProbe;
+        private Transform leftLegProbe;
+        private int actualSkinBoneBindings;
         internal int BoundTrackCount { get; private set; }
 
         internal void Configure(Transform root, ImperialTrooperAnimationSet animationSet)
@@ -156,6 +161,14 @@ namespace ImperialTrooperMod
             foreach (Transform t in transforms)
                 if (t != null && !byName.ContainsKey(t.name)) byName.Add(t.name, t);
 
+            var skinBones = new HashSet<Transform>();
+            foreach (SkinnedMeshRenderer renderer in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (renderer == null || renderer.bones == null) continue;
+                foreach (Transform bone in renderer.bones)
+                    if (bone != null) skinBones.Add(bone);
+            }
+            actualSkinBoneBindings = 0;
             int bound = 0;
             foreach (ImperialTrooperAnimationSet.Clip clip in new[] { idle, walk, jog, death, aim, fire })
             {
@@ -167,18 +180,26 @@ namespace ImperialTrooperMod
                     {
                         track.Target = target;
                         bound++;
+                        if (skinBones.Contains(target)) actualSkinBoneBindings++;
+                        string boneName = track.NodeName.ToLowerInvariant();
+                        if (leftArmProbe == null && (boneName.EndsWith("leftarm") || boneName.EndsWith("leftupperarm"))) leftArmProbe = target;
+                        if (rightArmProbe == null && (boneName.EndsWith("rightarm") || boneName.EndsWith("rightupperarm"))) rightArmProbe = target;
+                        if (leftLegProbe == null && (boneName.EndsWith("leftupleg") || boneName.EndsWith("leftupperleg") || boneName.EndsWith("leftthigh"))) leftLegProbe = target;
                     }
                 }
             }
 
             BoundTrackCount = bound;
             body = GetComponentInParent<CharacterBody>();
-            current = idle ?? walk ?? jog;
+            // Default to weapon-ready stance instead of a potentially T-pose-like civilian idle.
+            current = aim ?? idle ?? walk ?? jog;
             currentStartTime = Time.time;
             ImperialTrooperPlugin.LogSource?.LogInfo("Retargeted Stormtrooper skeletal clips loaded: " + set.ClipCount +
                 " clips; idle=" + (idle != null) + ", walk=" + (walk != null) + ", jog=" + (jog != null) +
                 ", aim=" + (aim != null) + ", fire=" + (fire != null) + ", death=" + (death != null) +
-                "; bound animation tracks=" + bound + ".");
+                "; bound animation tracks=" + bound + ", tracks bound to actual SkinnedMeshRenderer bones=" + actualSkinBoneBindings +
+                ", probe bones left arm=" + (leftArmProbe != null ? leftArmProbe.name : "<missing>") +
+                ", right arm=" + (rightArmProbe != null ? rightArmProbe.name : "<missing>") + ".");
         }
 
         internal void SetCombat(bool active)
@@ -239,6 +260,35 @@ namespace ImperialTrooperMod
                 currentStartTime = Time.time;
             }
             ApplyClip(current, Time.time - currentStartTime, current.Loop);
+            if ((current == walk || current == jog) && inCombat && aim != null)
+                ApplyUpperBodyClip(aim, Time.time - currentStartTime);
+            if (!loggedFirstPose && current != null)
+            {
+                loggedFirstPose = true;
+                ImperialTrooperPlugin.LogSource?.LogInfo("First skeletal pose applied: clip=" + current.Name +
+                    ", active=" + gameObject.activeInHierarchy +
+                    ", leftArmEuler=" + (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                    ", rightArmEuler=" + (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                    ", leftLegEuler=" + (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
+            }
+        }
+
+        private void ApplyUpperBodyClip(ImperialTrooperAnimationSet.Clip clip, float elapsed)
+        {
+            if (clip == null || clip.Tracks == null) return;
+            float t = clip.Loop ? Mathf.Repeat(elapsed, clip.Duration) : Mathf.Clamp(elapsed, 0f, clip.Duration);
+            foreach (ImperialTrooperAnimationSet.Track track in clip.Tracks)
+            {
+                if (track == null || track.Target == null || track.Keys == null || track.Keys.Length == 0) continue;
+                string name = track.NodeName.ToLowerInvariant();
+                bool upperBody = name.EndsWith("leftarm") || name.EndsWith("rightarm") ||
+                    name.EndsWith("leftforearm") || name.EndsWith("rightforearm") ||
+                    name.EndsWith("lefthand") || name.EndsWith("righthand") ||
+                    name.EndsWith("leftshoulder") || name.EndsWith("rightshoulder") ||
+                    name.EndsWith("spine") || name.EndsWith("spine1") || name.EndsWith("spine2") ||
+                    name.EndsWith("neck") || name.EndsWith("head");
+                if (upperBody) ApplyTrack(track, t);
+            }
         }
 
         private void ApplyClip(ImperialTrooperAnimationSet.Clip clip, float elapsed, bool loop)
@@ -246,25 +296,28 @@ namespace ImperialTrooperMod
             if (clip == null || clip.Tracks == null) return;
             float t = loop ? Mathf.Repeat(elapsed, clip.Duration) : Mathf.Clamp(elapsed, 0f, clip.Duration);
             foreach (ImperialTrooperAnimationSet.Track track in clip.Tracks)
+                ApplyTrack(track, t);
+        }
+
+        private static void ApplyTrack(ImperialTrooperAnimationSet.Track track, float t)
+        {
+            if (track == null || track.Target == null || track.Keys == null || track.Keys.Length == 0) return;
+            ImperialTrooperAnimationSet.Key a = track.Keys[0];
+            ImperialTrooperAnimationSet.Key b = track.Keys[track.Keys.Length - 1];
+            for (int i = 0; i < track.Keys.Length - 1; i++)
             {
-                if (track == null || track.Target == null || track.Keys == null || track.Keys.Length == 0) continue;
-                ImperialTrooperAnimationSet.Key a = track.Keys[0];
-                ImperialTrooperAnimationSet.Key b = track.Keys[track.Keys.Length - 1];
-                for (int i = 0; i < track.Keys.Length - 1; i++)
+                if (track.Keys[i].Time <= t && track.Keys[i + 1].Time >= t)
                 {
-                    if (track.Keys[i].Time <= t && track.Keys[i + 1].Time >= t)
-                    {
-                        a = track.Keys[i];
-                        b = track.Keys[i + 1];
-                        break;
-                    }
+                    a = track.Keys[i];
+                    b = track.Keys[i + 1];
+                    break;
                 }
-                float span = b.Time - a.Time;
-                float blend = span > 0.0001f ? Mathf.Clamp01((t - a.Time) / span) : 0f;
-                track.Target.localPosition = Vector3.LerpUnclamped(a.Position, b.Position, blend);
-                track.Target.localRotation = Quaternion.SlerpUnclamped(a.Rotation, b.Rotation, blend);
-                track.Target.localScale = Vector3.LerpUnclamped(a.Scale, b.Scale, blend);
             }
+            float span = b.Time - a.Time;
+            float blend = span > 0.0001f ? Mathf.Clamp01((t - a.Time) / span) : 0f;
+            track.Target.localPosition = Vector3.LerpUnclamped(a.Position, b.Position, blend);
+            track.Target.localRotation = Quaternion.SlerpUnclamped(a.Rotation, b.Rotation, blend);
+            track.Target.localScale = Vector3.LerpUnclamped(a.Scale, b.Scale, blend);
         }
     }
 }
