@@ -22,12 +22,11 @@ namespace ImperialTrooperMod
     [BepInDependency(DirectorAPI.PluginGUID, BepInDependency.DependencyFlags.HardDependency)]
     [BepInDependency(PrefabAPI.PluginGUID, BepInDependency.DependencyFlags.HardDependency)]
     [BepInDependency("com.bepis.r2api.content_management", BepInDependency.DependencyFlags.HardDependency)]
-    [BepInDependency("com.x753.AudioEngineFix", BepInDependency.DependencyFlags.HardDependency)]
     public sealed class ImperialTrooperPlugin : BaseUnityPlugin
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.4";
+        public const string PluginVersion = "0.3.5";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
