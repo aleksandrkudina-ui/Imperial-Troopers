@@ -429,18 +429,90 @@ namespace ImperialTrooperMod
             if (CommsBeepClip != null) PlayClip(CommsBeepClip, position, 0.42f);
         }
 
+        private Material FindProjectileMaterial(GameObject source)
+        {
+            if (source == null) return null;
+            ProjectileController sourceController = source.GetComponent<ProjectileController>();
+            if (sourceController != null && sourceController.ghostPrefab != null)
+            {
+                Renderer ghostRenderer = sourceController.ghostPrefab.GetComponentInChildren<Renderer>(true);
+                if (ghostRenderer != null && ghostRenderer.sharedMaterial != null) return ghostRenderer.sharedMaterial;
+            }
+            Renderer renderer = source.GetComponentInChildren<Renderer>(true);
+            return renderer != null ? renderer.sharedMaterial : null;
+        }
+
+        private GameObject CreateRedBlasterGhost(Material template)
+        {
+            if (template == null) throw new InvalidOperationException("The vanilla projectile supplied no material to build a custom red bolt.");
+            GameObject ghost = new GameObject("ImperialTrooperRedBoltGhost");
+            ghost.transform.localScale = Vector3.one;
+
+            GameObject core = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+            core.name = "RedBlasterBoltCore";
+            Collider collider = core.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
+            core.transform.SetParent(ghost.transform, false);
+            core.transform.localPosition = Vector3.zero;
+            core.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            core.transform.localScale = new Vector3(0.052f, 0.19f, 0.052f);
+
+            Material boltMaterial = new Material(template) { name = "ImperialTrooperRedBoltMaterial" };
+            SetTint(boltMaterial, new Color(1f, 0.018f, 0.012f, 1f));
+            if (boltMaterial.HasProperty("_EmissionColor"))
+            {
+                boltMaterial.EnableKeyword("_EMISSION");
+                boltMaterial.SetColor("_EmissionColor", new Color(1f, 0.006f, 0.002f, 1f) * 4.0f);
+            }
+            Renderer coreRenderer = core.GetComponent<Renderer>();
+            if (coreRenderer != null)
+            {
+                coreRenderer.sharedMaterial = boltMaterial;
+                coreRenderer.shadowCastingMode = ShadowCastingMode.Off;
+                coreRenderer.receiveShadows = false;
+            }
+
+            TrailRenderer trail = ghost.AddComponent<TrailRenderer>();
+            trail.material = boltMaterial;
+            trail.time = 0.13f;
+            trail.startWidth = 0.055f;
+            trail.endWidth = 0.004f;
+            trail.minVertexDistance = 0.025f;
+            trail.numCornerVertices = 2;
+            trail.numCapVertices = 2;
+            trail.shadowCastingMode = ShadowCastingMode.Off;
+            trail.receiveShadows = false;
+            trail.alignment = LineAlignment.View;
+            Gradient gradient = new Gradient();
+            gradient.SetKeys(
+                new[] {
+                    new GradientColorKey(new Color(1f, 0.015f, 0.008f), 0f),
+                    new GradientColorKey(new Color(1f, 0.17f, 0.035f), 1f)
+                },
+                new[] {
+                    new GradientAlphaKey(0.92f, 0f),
+                    new GradientAlphaKey(0.52f, 0.65f),
+                    new GradientAlphaKey(0f, 1f)
+                });
+            trail.colorGradient = gradient;
+            return ghost;
+        }
+
         private void TryRegisterBlasterBolt()
         {
+            // Never use the Lunar Golem twin-shot prefab: its blue orb and oscillating movement
+            // are visibly wrong for a straight E-11 blaster bolt. Commando's simple grenade projectile
+            // is used only for the collision/damage components; its visual is replaced entirely.
             string[] candidates = {
-                "Prefabs/Projectiles/LunarGolemTwinShotProjectile",
-                "Prefabs/Projectiles/CommandoGrenadeProjectile"
+                "Prefabs/Projectiles/CommandoGrenadeProjectile",
+                "Prefabs/Projectiles/LunarGolemTwinShotProjectile"
             };
             GameObject source = null;
             string selectedPath = null;
-            foreach (string path in candidates)
+            foreach (string candidatePath in candidates)
             {
-                source = LegacyResourcesAPI.Load<GameObject>(path);
-                if (source != null) { selectedPath = path; break; }
+                source = LegacyResourcesAPI.Load<GameObject>(candidatePath);
+                if (source != null) { selectedPath = candidatePath; break; }
             }
             if (source == null)
             {
@@ -450,6 +522,9 @@ namespace ImperialTrooperMod
 
             try
             {
+                Material sourceMaterial = FindProjectileMaterial(source);
+                if (sourceMaterial == null) throw new InvalidOperationException("Selected vanilla projectile has no renderer material.");
+
                 BlasterBoltPrefab = PrefabAPI.InstantiateClone(source, "ImperialTrooperBlasterBolt", true);
                 ProjectileController controller = BlasterBoltPrefab.GetComponent<ProjectileController>();
                 if (controller == null) controller = BlasterBoltPrefab.AddComponent<ProjectileController>();
@@ -462,7 +537,7 @@ namespace ImperialTrooperMod
                 ProjectileImpactExplosion impact = BlasterBoltPrefab.GetComponent<ProjectileImpactExplosion>();
                 if (impact != null)
                 {
-                    impact.blastRadius = 0.42f;
+                    impact.blastRadius = 0.30f;
                     impact.blastDamageCoefficient = 1f;
                     impact.lifetime = 5f;
                     impact.timerAfterImpact = false;
@@ -470,8 +545,10 @@ namespace ImperialTrooperMod
                     impact.destroyOnEnemy = true;
                 }
 
-                TintBoltVisual(BlasterBoltPrefab, "ImperialTrooper_BoltRed");
-                // Keep cloned vanilla visuals; custom shader lookup is unsafe under RoR2 LegacyShaderAPI.
+                // Hide every inherited mesh/renderer so no blue spherical twin-shot can leak through.
+                foreach (Renderer renderer in BlasterBoltPrefab.GetComponentsInChildren<Renderer>(true))
+                    if (renderer != null) renderer.enabled = false;
+
                 foreach (MonoBehaviour behaviour in BlasterBoltPrefab.GetComponents<MonoBehaviour>())
                 {
                     if (behaviour == null) continue;
@@ -480,27 +557,27 @@ namespace ImperialTrooperMod
                         typeName.IndexOf("Steer", StringComparison.OrdinalIgnoreCase) >= 0 ||
                         typeName.IndexOf("Homing", StringComparison.OrdinalIgnoreCase) >= 0 ||
                         typeName.IndexOf("TargetFinder", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        typeName.IndexOf("Wave", StringComparison.OrdinalIgnoreCase) >= 0)
-                        behaviour.enabled = false;
+                        typeName.IndexOf("Wave", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        typeName.IndexOf("Oscillat", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        typeName.IndexOf("Wander", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Behaviour motionBehaviour = behaviour as Behaviour;
+                        if (motionBehaviour != null) motionBehaviour.enabled = false;
+                    }
                 }
-                if (controller.ghostPrefab != null)
-                {
-                    GameObject ghost = PrefabAPI.InstantiateClone(controller.ghostPrefab, "ImperialTrooperRedBoltGhost", false);
-                    TintBoltVisual(ghost, "ImperialTrooper_BoltGhostRed");
-                    // Keep the vanilla ghost visual without constructing a custom trail shader.
-                    ghost.transform.localScale *= 0.58f;
-                    controller.ghostPrefab = ghost;
-                }
+
+                controller.ghostPrefab = CreateRedBlasterGhost(sourceMaterial);
 
                 Rigidbody rb = BlasterBoltPrefab.GetComponent<Rigidbody>();
                 if (rb != null) { rb.useGravity = false; rb.drag = 0f; }
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
-                Logger.LogInfo("Registered slow red blaster bolt using " + selectedPath + " (6.5 m/s, 5 s lifetime).");
+                Logger.LogInfo("Registered custom straight red E-11 bolt using " + selectedPath +
+                    " (6.5 m/s, 5 s lifetime, custom capsule/trail ghost; vanilla source renderers disabled).");
             }
             catch (Exception ex)
             {
                 BlasterBoltPrefab = null;
-                Logger.LogWarning("Blaster bolt setup failed; using low-damage hitscan fallback: " + ex);
+                Logger.LogWarning("Custom red blaster bolt setup failed; using low-damage hitscan fallback: " + ex);
             }
         }
 
