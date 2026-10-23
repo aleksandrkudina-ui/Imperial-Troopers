@@ -27,8 +27,8 @@ out_path = Path(sys.argv[3]) if len(sys.argv) > 3 else Path("Stormtrooper.ianim"
 
 target_scene = assimp_py.import_file(str(target_path), FLAGS)
 source_scene = assimp_py.import_file(str(source_path), FLAGS)
-if not getattr(source_scene, "animations", None):
-    raise RuntimeError("Animation source FBX contains no skeletal clips.")
+if not getattr(source_scene, "root_node", None):
+    raise RuntimeError("Animation source has no root node: " + str(source_path))
 if not getattr(target_scene, "root_node", None):
     raise RuntimeError("Stormtrooper FBX has no root node.")
 
