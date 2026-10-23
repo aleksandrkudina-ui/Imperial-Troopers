@@ -350,6 +350,11 @@ def read_glb_animations(path):
             sampler = samplers[int(channel["sampler"])]
             times = [float(value) for value in read_gltf_accessor(document, binary_chunk, int(sampler["input"]))]
             values = read_gltf_accessor(document, binary_chunk, int(sampler["output"]))
+            # The source node bind transforms are imported by Assimp with
+            # Process_MakeLeftHanded, so convert the raw glTF rotation keys to
+            # the same handedness before computing source-local rotation deltas.
+            if target["path"] == "rotation":
+                values = [(-row[0], -row[1], row[2], row[3]) for row in values]
             interpolation = sampler.get("interpolation", "LINEAR")
             if interpolation == "CUBICSPLINE":
                 if len(values) != len(times) * 3:
