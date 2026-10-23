@@ -92,7 +92,7 @@ def normalized_name(value):
 
 # Semantic names allow Unreal/Quaternius humanoid tracks to drive the Mixamo bones.
 ALIASES = {
-    "hips": {"hips", "pelvis", "root"},
+    "hips": {"hips", "pelvis"},
     "spine": {"spine", "spine01"},
     "spine1": {"spine02", "spine2"},
     "spine2": {"spine03", "spine3", "chest", "upperchest"},
@@ -232,13 +232,17 @@ def channel_semantic(channel):
 
 def clip_label(name):
     norm = "".join(ch.lower() for ch in str(name or "") if ch.isalnum())
+    # Detect weapon-specific clips before generic "idle", otherwise Pistol_Idle_Loop
+    # would incorrectly replace the standing idle cycle.
+    if any(token in norm for token in ("pistolaim", "rifleaim", "gunidle", "rifleidle", "aimidle")) or norm in ("aim", "pistolaime", "pistolaidlelo"):
+        return "aim"
+    if any(token in norm for token in ("pistolshoot", "rifleshoot", "gunshoot", "shoot", "fire")):
+        return "fire"
     choices = [
-        ("idle", ("idleloop", "idle")),
-        ("walk", ("walkloop", "walkfwdloop", "walkforwardloop", "walkfwd", "walk")),
-        ("jog", ("jogfwdloop", "jogloop", "runfwdloop", "runloop", "jogfwd", "jog", "run")),
         ("death", ("death01", "deathloop", "death", "die")),
-        ("aim", ("rifleaim", "pistolaime", "gunidle", "rifleidle", "aimidle", "aim")),
-        ("fire", ("rifleshoot", "pistolshoot", "gunshoot", "shoot", "fire")),
+        ("walk", ("walkloop", "walkfwdloop", "walkforwardloop", "walkfwd", "walk")),
+        ("jog", ("jogfwdloop", "jogloop", "runfwdloop", "runloop", "jogfwd", "jog", "run", "sprint")),
+        ("idle", ("idleloop", "idle")),
     ]
     for label, tokens in choices:
         if any(norm == token for token in tokens):
