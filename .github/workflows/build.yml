@@ -20,6 +20,23 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Set up Python for animation retargeting
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Generate skeletal animation clips
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $project = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject"
+          $animationSource = Join-Path $env:RUNNER_TEMP "UAL1_Standard.fbx"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Khyretos/kk-engine/6e8521a373664d842541b7af4e3d1c89978a591e/assets/animations/UAL1_Standard.fbx" -OutFile $animationSource
+          python -m pip install --disable-pip-version-check assimp_py
+          if ($LASTEXITCODE -ne 0) { throw "Could not install assimp_py for animation conversion" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$animationSource" "$project/Assets/Stormtrooper.ianim"
+          if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect the clip and bone mapping output above" }
+
       - name: Restore
         working-directory: ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject
         run: dotnet restore ImperialTrooperMod.csproj --configfile nuget.config
@@ -34,6 +51,9 @@ jobs:
           $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
           if (!(Test-Path "$dir/ImperialTrooper.dll")) { throw "Build output DLL is missing" }
           if (!(Test-Path "$dir/Stormtrooper.imodel")) { throw "Stormtrooper.imodel is missing" }
+          if (!(Test-Path "$dir/Stormtrooper.ianim")) { throw "Retargeted Stormtrooper.ianim is missing" }
+          if ((Get-Item "$dir/Stormtrooper.ianim").Length -lt 10000) { throw "Retargeted Stormtrooper.ianim is unexpectedly small" }
+          if (!(Test-Path "$dir/ANIMATION_LICENSE.txt")) { throw "Animation source license file is missing" }
           if (!(Test-Path "$dir/Audio")) { throw "Audio directory is missing" }
           $audio = Get-ChildItem "$dir/Audio" -Filter *.mp3
           if ($audio.Count -lt 1) { throw "No MP3 audio files were packaged" }
@@ -42,12 +62,12 @@ jobs:
         shell: pwsh
         run: |
           $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
-          Compress-Archive -Path "$dir/*" -DestinationPath "ImperialTroopers_0.3.4_build.zip" -Force
+          Compress-Archive -Path "$dir/*" -DestinationPath "ImperialTroopers_0.3.6_build.zip" -Force
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.4-build
+          name: ImperialTroopers-0.3.6-build
           path: |
             ImperialTroopers_0.3.4_build.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
