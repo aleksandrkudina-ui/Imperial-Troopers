@@ -62,6 +62,13 @@ jobs:
         working-directory: ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject
         run: dotnet build ImperialTrooperMod.csproj --configuration Release --no-restore
 
+      - name: Generate mod icon
+        shell: pwsh
+        run: |
+          $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/make_mod_icon.py" "$dir/icon.png"
+          if ($LASTEXITCODE -ne 0) { throw "Could not create Thunderstore icon" }
+
       - name: Verify packaged files
         shell: pwsh
         run: |
@@ -77,13 +84,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Thunderstore mod icon failed validation" }
           $audio = Get-ChildItem "$dir/Audio" -Filter *.mp3
           if ($audio.Count -lt 1) { throw "No MP3 audio files were packaged" }
-
-      - name: Generate mod icon
-        shell: pwsh
-        run: |
-          $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
-          python "ImperialTrooper_SourceBundle_0.3.4/tools/make_mod_icon.py" "$dir/icon.png"
-          if ($LASTEXITCODE -ne 0) { throw "Could not create Thunderstore icon" }
 
       - name: Create Thunderstore package ZIP
         shell: pwsh
