@@ -481,8 +481,10 @@ with out_path.open("wb") as stream:
         stream.write(struct.pack("<fi", float(duration), len(tracks)))
         for node_name, keys in tracks:
             encoded = node_name.encode("utf-8")
-            stream.write(struct.pack("<ii", len(encoded), len(keys)))
+            # Runtime loader reads the bone-name string first, then its key count.
+            stream.write(struct.pack("<i", len(encoded)))
             stream.write(encoded)
+            stream.write(struct.pack("<i", len(keys)))
             for t, pos, rot, scale in keys:
                 stream.write(struct.pack("<f3f4f3f", float(t), *pos, *rot, *scale))
 print("Wrote " + str(out_path) + " (" + str(out_path.stat().st_size) + " bytes, " + str(len(out_clips)) + " clips)")
