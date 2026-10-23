@@ -36,16 +36,19 @@ jobs:
           if (!$metadata.url) { throw "Quaternius did not return a download URL for its Standard animation pack" }
           Invoke-WebRequest -Uri $metadata.url -OutFile $archive
           Expand-Archive -Path $archive -DestinationPath $assetDirectory -Force
-          $fbxFiles = @(Get-ChildItem -Path $assetDirectory -Recurse -File -Filter *.fbx)
-          if ($fbxFiles.Count -eq 0) {
+          $animationFiles = @(Get-ChildItem -Path $assetDirectory -Recurse -File | Where-Object { $_.Extension -in @(".glb", ".fbx") })
+          if ($animationFiles.Count -eq 0) {
             Get-ChildItem -Path $assetDirectory -Recurse -File | Select-Object -ExpandProperty FullName
-            throw "The official Quaternius Standard archive contained no FBX animation files"
+            throw "The official Quaternius Standard archive contained no GLB or FBX animation files"
           }
-          Write-Host "FBX files supplied in official Quaternius Standard archive:"
-          $fbxFiles | ForEach-Object { Write-Host ("{0} ({1} bytes)" -f $_.FullName, $_.Length) }
-          $animationSourceFile = $fbxFiles | Where-Object { $_.Name -eq "UAL1_Standard.fbx" } | Select-Object -First 1
-          if (!$animationSourceFile) { $animationSourceFile = $fbxFiles | Where-Object { $_.Name -match "Standard.*\.fbx$" } | Select-Object -First 1 }
-          if (!$animationSourceFile) { $animationSourceFile = $fbxFiles | Sort-Object Length -Descending | Select-Object -First 1 }
+          Write-Host "Animation model files supplied in official Quaternius Standard archive:"
+          $animationFiles | ForEach-Object { Write-Host ("{0} ({1} bytes)" -f $_.FullName, $_.Length) }
+          # The creator switched the Unreal export to GLB in 2026. Prefer GLB first because
+          # Assimp currently sees no clips in the packaged Unity FBX variant on CI.
+          $animationSourceFile = $animationFiles | Where-Object { $_.Name -eq "UAL1_Standard.glb" } | Select-Object -First 1
+          if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -eq "UAL1_Standard.fbx" } | Select-Object -First 1 }
+          if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -match "Standard.*\.(glb|fbx)$" } | Select-Object -First 1 }
+          if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Sort-Object Length -Descending | Select-Object -First 1 }
           python -m pip install --disable-pip-version-check assimp_py
           if ($LASTEXITCODE -ne 0) { throw "Could not install assimp_py for animation conversion" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$($animationSourceFile.FullName)" "$project/Assets/Stormtrooper.ianim"
