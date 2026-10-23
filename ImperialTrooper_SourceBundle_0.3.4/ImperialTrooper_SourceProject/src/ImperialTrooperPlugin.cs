@@ -26,7 +26,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.7";
+        public const string PluginVersion = "0.3.8";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
