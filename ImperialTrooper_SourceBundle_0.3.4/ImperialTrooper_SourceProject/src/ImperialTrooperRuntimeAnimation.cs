@@ -22,7 +22,6 @@ namespace ImperialTrooperMod
         {
             internal string NodeName;
             internal Key[] Keys;
-            internal Transform Target;
         }
 
         internal sealed class Clip
@@ -123,6 +122,16 @@ namespace ImperialTrooperMod
         private CharacterBody body;
         private Transform visualRoot;
         private ImperialTrooperAnimationSet set;
+        // Animation data is shared and immutable. Transform targets must be bound per spawned
+        // enemy instance, otherwise prefab clones either inherit no runtime state or animate a
+        // different trooper's bones.
+        private Dictionary<ImperialTrooperAnimationSet.Track, Transform> targetBindings =
+            new Dictionary<ImperialTrooperAnimationSet.Track, Transform>();
+        private bool configured;
+        private bool loggedUpdateEntry;
+        private bool observedAlive;
+        private bool loggedInitialDeadState;
+        private bool loggedDeathClip;
         private ImperialTrooperAnimationSet.Clip idle;
         private ImperialTrooperAnimationSet.Clip walk;
         private ImperialTrooperAnimationSet.Clip jog;
@@ -145,9 +154,18 @@ namespace ImperialTrooperMod
 
         internal void Configure(Transform root, ImperialTrooperAnimationSet animationSet)
         {
+            if (root == null || animationSet == null) return;
+            if (configured && visualRoot == root && set == animationSet)
+            {
+                if (body == null) body = GetComponentInParent<CharacterBody>();
+                return;
+            }
+
             visualRoot = root;
             set = animationSet;
-            if (set == null) return;
+            if (targetBindings == null)
+                targetBindings = new Dictionary<ImperialTrooperAnimationSet.Track, Transform>();
+            targetBindings.Clear();
 
             idle = set.Find("idle");
             walk = set.Find("walk");
@@ -168,17 +186,21 @@ namespace ImperialTrooperMod
                 foreach (Transform bone in renderer.bones)
                     if (bone != null) skinBones.Add(bone);
             }
+
             actualSkinBoneBindings = 0;
+            leftArmProbe = null;
+            rightArmProbe = null;
+            leftLegProbe = null;
             int bound = 0;
             foreach (ImperialTrooperAnimationSet.Clip clip in new[] { idle, walk, jog, death, aim, fire })
             {
                 if (clip == null) continue;
                 foreach (ImperialTrooperAnimationSet.Track track in clip.Tracks)
                 {
-                    if (track == null || track.Target != null) continue;
+                    if (track == null) continue;
                     if (byName.TryGetValue(track.NodeName, out Transform target))
                     {
-                        track.Target = target;
+                        targetBindings[track] = target;
                         bound++;
                         if (skinBones.Contains(target)) actualSkinBoneBindings++;
                         string boneName = track.NodeName.ToLowerInvariant();
@@ -191,31 +213,46 @@ namespace ImperialTrooperMod
 
             BoundTrackCount = bound;
             body = GetComponentInParent<CharacterBody>();
-            // Default to weapon-ready stance instead of a potentially T-pose-like civilian idle.
             current = aim ?? idle ?? walk ?? jog;
             currentStartTime = Time.time;
+            action = null;
+            deathStarted = false;
+            observedAlive = false;
+            loggedInitialDeadState = false;
+            loggedDeathClip = false;
+            configured = true;
 
-            // Pose the serialized body prefab immediately. Waiting for the first LateUpdate
-            // leaves a default skinned mesh in T-pose during prefab setup and on clones whose
-            // animation component is temporarily inactive during RoR2's model initialization.
             if (current != null)
             {
                 ApplyClip(current, 0f, current.Loop);
-                ImperialTrooperPlugin.LogSource?.LogInfo("Initial authored Stormtrooper pose applied during setup: clip=" +
-                    current.Name + ", leftArmEuler=" +
-                    (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
-                    ", rightArmEuler=" +
-                    (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
-                    ", leftLegEuler=" +
-                    (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
+                ImperialTrooperPlugin.LogSource?.LogInfo("Initial authored Stormtrooper pose applied to instance " +
+                    GetInstanceID() + ": clip=" + current.Name +
+                    ", rootActive=" + gameObject.activeInHierarchy +
+                    ", parentBody=" + (body != null ? body.name : "<none>") +
+                    ", leftArmEuler=" + (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                    ", rightArmEuler=" + (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                    ", leftLegEuler=" + (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
             }
 
-            ImperialTrooperPlugin.LogSource?.LogInfo("Retargeted Stormtrooper skeletal clips loaded: " + set.ClipCount +
-                " clips; idle=" + (idle != null) + ", walk=" + (walk != null) + ", jog=" + (jog != null) +
+            ImperialTrooperPlugin.LogSource?.LogInfo("Bound Stormtrooper animation instance " + GetInstanceID() +
+                ": clips=" + set.ClipCount + ", tracks=" + bound +
+                ", toActualSkinBones=" + actualSkinBoneBindings +
+                ", idle=" + (idle != null) + ", walk=" + (walk != null) + ", jog=" + (jog != null) +
                 ", aim=" + (aim != null) + ", fire=" + (fire != null) + ", death=" + (death != null) +
-                "; bound animation tracks=" + bound + ", tracks bound to actual SkinnedMeshRenderer bones=" + actualSkinBoneBindings +
-                ", probe bones left arm=" + (leftArmProbe != null ? leftArmProbe.name : "<missing>") +
-                ", right arm=" + (rightArmProbe != null ? rightArmProbe.name : "<missing>") + ".");
+                ", instanceRoot=" + root.name + ", rootActive=" + root.gameObject.activeInHierarchy + ".");
+        }
+
+        private void EnsureInstanceBinding()
+        {
+            if (configured && visualRoot != null && set != null && targetBindings != null && targetBindings.Count > 0)
+            {
+                if (body == null) body = GetComponentInParent<CharacterBody>();
+                return;
+            }
+
+            ImperialTrooperAnimationSet animationSet = ImperialTrooperPlugin.RuntimeTrooperAnimationSet;
+            if (animationSet != null)
+                Configure(transform, animationSet);
         }
 
         internal void SetCombat(bool active)
@@ -233,16 +270,57 @@ namespace ImperialTrooperMod
 
         private void Awake()
         {
-            if (body == null) body = GetComponentInParent<CharacterBody>();
+            body = GetComponentInParent<CharacterBody>();
+            EnsureInstanceBinding();
+        }
+
+        private void OnEnable()
+        {
+            EnsureInstanceBinding();
         }
 
         private void LateUpdate()
         {
-            if (visualRoot == null || set == null) return;
-            if (body == null) body = GetComponentInParent<CharacterBody>();
+            // These components are attached while constructing the prefab, then instantiated by
+            // RoR2. Private runtime references are not valid instance bindings after cloning.
+            EnsureInstanceBinding();
+            if (!configured || visualRoot == null || set == null || targetBindings == null || targetBindings.Count == 0)
+                return;
 
-            bool deadNow = body != null && body.healthComponent != null && !body.healthComponent.alive;
-            if (deadNow)
+            if (body == null) body = GetComponentInParent<CharacterBody>();
+            if (!loggedUpdateEntry)
+            {
+                loggedUpdateEntry = true;
+                bool aliveAtFirstTick = body != null && body.healthComponent != null && body.healthComponent.alive;
+                ImperialTrooperPlugin.LogSource?.LogInfo("Stormtrooper animation tick active: instance=" + GetInstanceID() +
+                    ", rootActive=" + gameObject.activeInHierarchy + ", boundTracks=" + targetBindings.Count +
+                    ", parentBody=" + (body != null ? body.name : "<none>") + ", aliveAtFirstTick=" + aliveAtFirstTick + ".");
+            }
+
+            bool healthKnown = body != null && body.healthComponent != null;
+            bool aliveNow = healthKnown && body.healthComponent.alive;
+            if (!observedAlive)
+            {
+                if (!healthKnown || !aliveNow)
+                {
+                    // RoR2 can instantiate the prefab before its HealthComponent has started.
+                    // Do not mistake that startup interval for a death and freeze the death state.
+                    if (!loggedInitialDeadState && healthKnown)
+                    {
+                        loggedInitialDeadState = true;
+                        ImperialTrooperPlugin.LogSource?.LogInfo("Stormtrooper instance " + GetInstanceID() +
+                            " is waiting for initial health startup; keeping weapon-ready pose.");
+                    }
+                    ImperialTrooperAnimationSet.Clip spawnPose = aim ?? idle ?? walk ?? jog;
+                    if (spawnPose != null) ApplyClip(spawnPose, 0f, false);
+                    return;
+                }
+
+                observedAlive = true;
+                ImperialTrooperPlugin.LogSource?.LogInfo("Stormtrooper instance " + GetInstanceID() + " entered alive state; animation loop started.");
+            }
+
+            if (healthKnown && !aliveNow)
             {
                 if (!deathStarted)
                 {
@@ -250,8 +328,16 @@ namespace ImperialTrooperMod
                     action = null;
                     current = death;
                     currentStartTime = Time.time;
+                    if (!loggedDeathClip)
+                    {
+                        loggedDeathClip = true;
+                        ImperialTrooperPlugin.LogSource?.LogInfo("Stormtrooper instance " + GetInstanceID() +
+                            " entered death clip; clipAvailable=" + (death != null) +
+                            ", bindingCount=" + targetBindings.Count + ".");
+                    }
                 }
                 if (death != null) ApplyClip(death, Time.time - currentStartTime, false);
+                LogPoseApplied("death");
                 return;
             }
 
@@ -259,6 +345,7 @@ namespace ImperialTrooperMod
             if (action != null && Time.time < actionEndTime)
             {
                 ApplyClip(action, Time.time - actionStartTime, false);
+                LogPoseApplied(action.Name);
                 return;
             }
             action = null;
@@ -278,15 +365,19 @@ namespace ImperialTrooperMod
             ApplyClip(current, Time.time - currentStartTime, current.Loop);
             if ((current == walk || current == jog) && inCombat && aim != null)
                 ApplyUpperBodyClip(aim, Time.time - currentStartTime);
-            if (!loggedFirstPose && current != null)
-            {
-                loggedFirstPose = true;
-                ImperialTrooperPlugin.LogSource?.LogInfo("First skeletal pose applied: clip=" + current.Name +
-                    ", active=" + gameObject.activeInHierarchy +
-                    ", leftArmEuler=" + (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
-                    ", rightArmEuler=" + (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
-                    ", leftLegEuler=" + (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
-            }
+            LogPoseApplied(current.Name);
+        }
+
+        private void LogPoseApplied(string clipName)
+        {
+            if (loggedFirstPose) return;
+            loggedFirstPose = true;
+            ImperialTrooperPlugin.LogSource?.LogInfo("First skeletal pose applied at runtime: instance=" + GetInstanceID() +
+                ", clip=" + clipName + ", active=" + gameObject.activeInHierarchy +
+                ", boundTracks=" + (targetBindings != null ? targetBindings.Count : 0) +
+                ", leftArmEuler=" + (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                ", rightArmEuler=" + (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
+                ", leftLegEuler=" + (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
         }
 
         private void ApplyUpperBodyClip(ImperialTrooperAnimationSet.Clip clip, float elapsed)
@@ -295,7 +386,8 @@ namespace ImperialTrooperMod
             float t = clip.Loop ? Mathf.Repeat(elapsed, clip.Duration) : Mathf.Clamp(elapsed, 0f, clip.Duration);
             foreach (ImperialTrooperAnimationSet.Track track in clip.Tracks)
             {
-                if (track == null || track.Target == null || track.Keys == null || track.Keys.Length == 0) continue;
+                if (track == null || !targetBindings.TryGetValue(track, out Transform target) || target == null ||
+                    track.Keys == null || track.Keys.Length == 0) continue;
                 string name = track.NodeName.ToLowerInvariant();
                 bool upperBody = name.EndsWith("leftarm") || name.EndsWith("rightarm") ||
                     name.EndsWith("leftforearm") || name.EndsWith("rightforearm") ||
@@ -303,7 +395,7 @@ namespace ImperialTrooperMod
                     name.EndsWith("leftshoulder") || name.EndsWith("rightshoulder") ||
                     name.EndsWith("spine") || name.EndsWith("spine1") || name.EndsWith("spine2") ||
                     name.EndsWith("neck") || name.EndsWith("head");
-                if (upperBody) ApplyTrack(track, t);
+                if (upperBody) ApplyTrack(track, target, t);
             }
         }
 
@@ -312,12 +404,15 @@ namespace ImperialTrooperMod
             if (clip == null || clip.Tracks == null) return;
             float t = loop ? Mathf.Repeat(elapsed, clip.Duration) : Mathf.Clamp(elapsed, 0f, clip.Duration);
             foreach (ImperialTrooperAnimationSet.Track track in clip.Tracks)
-                ApplyTrack(track, t);
+            {
+                if (track == null || targetBindings == null || !targetBindings.TryGetValue(track, out Transform target)) continue;
+                ApplyTrack(track, target, t);
+            }
         }
 
-        private static void ApplyTrack(ImperialTrooperAnimationSet.Track track, float t)
+        private static void ApplyTrack(ImperialTrooperAnimationSet.Track track, Transform target, float t)
         {
-            if (track == null || track.Target == null || track.Keys == null || track.Keys.Length == 0) return;
+            if (track == null || target == null || track.Keys == null || track.Keys.Length == 0) return;
             ImperialTrooperAnimationSet.Key a = track.Keys[0];
             ImperialTrooperAnimationSet.Key b = track.Keys[track.Keys.Length - 1];
             for (int i = 0; i < track.Keys.Length - 1; i++)
@@ -331,9 +426,9 @@ namespace ImperialTrooperMod
             }
             float span = b.Time - a.Time;
             float blend = span > 0.0001f ? Mathf.Clamp01((t - a.Time) / span) : 0f;
-            track.Target.localPosition = Vector3.LerpUnclamped(a.Position, b.Position, blend);
-            track.Target.localRotation = Quaternion.SlerpUnclamped(a.Rotation, b.Rotation, blend);
-            track.Target.localScale = Vector3.LerpUnclamped(a.Scale, b.Scale, blend);
+            target.localPosition = Vector3.LerpUnclamped(a.Position, b.Position, blend);
+            target.localRotation = Quaternion.SlerpUnclamped(a.Rotation, b.Rotation, blend);
+            target.localScale = Vector3.LerpUnclamped(a.Scale, b.Scale, blend);
         }
     }
 }
