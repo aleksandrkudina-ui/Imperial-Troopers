@@ -8,6 +8,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using IOPath = System.IO.Path;
 using System.Linq;
 using System.Reflection;
@@ -460,7 +461,6 @@ namespace ImperialTrooperMod
                 if (particles == null) continue;
                 particles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 particles.Clear(true);
-                particles.enabled = false;
             }
             foreach (TrailRenderer oldTrail in ghost.GetComponentsInChildren<TrailRenderer>(true))
                 if (oldTrail != null) oldTrail.enabled = false;
