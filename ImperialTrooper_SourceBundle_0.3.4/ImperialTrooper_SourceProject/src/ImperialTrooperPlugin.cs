@@ -26,7 +26,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.5";
+        public const string PluginVersion = "0.3.6";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -36,6 +36,7 @@ namespace ImperialTrooperMod
         private static AssetBundle ImportedTrooperAssetBundle;
         private static GameObject ImportedTrooperModelPrefab;
         private static ImperialTrooperRuntimeModelData RuntimeTrooperModelData;
+        private static ImperialTrooperAnimationSet RuntimeTrooperAnimationSet;
         internal static AudioClip BlasterShotClip;
         internal static AudioClip RadioContactClip;
         internal static AudioClip RadioTargetAcquiredClip;
@@ -564,6 +565,22 @@ namespace ImperialTrooperMod
         private void TryLoadImportedTrooperModel()
         {
             string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
+            string animationPath = IOPath.Combine(pluginDirectory, "Stormtrooper.ianim");
+            RuntimeTrooperAnimationSet = null;
+            if (File.Exists(animationPath))
+            {
+                try
+                {
+                    RuntimeTrooperAnimationSet = ImperialTrooperAnimationSet.Load(animationPath);
+                    Logger.LogInfo("Loaded retargeted Stormtrooper skeletal animations (" + RuntimeTrooperAnimationSet.ClipCount + " clips).");
+                }
+                catch (Exception animationEx)
+                {
+                    Logger.LogWarning("Could not load Stormtrooper.ianim; using procedural fallback animation: " + animationEx.Message);
+                    RuntimeTrooperAnimationSet = null;
+                }
+            }
+            else Logger.LogWarning("Stormtrooper.ianim not found; skeletal clip playback is unavailable and procedural fallback animation will be used.");
             string runtimeModelPath = IOPath.Combine(pluginDirectory, "Stormtrooper.imodel");
             if (File.Exists(runtimeModelPath))
             {
@@ -721,13 +738,29 @@ namespace ImperialTrooperMod
                 muzzle.transform.localPosition = new Vector3(0f, 2.0f, -0.4f);
             }
 
-            if (boneMap.Count >= 8)
+            bool usingSkeletalClips = false;
+            if (RuntimeTrooperAnimationSet != null && RuntimeTrooperAnimationSet.ClipCount > 0)
+            {
+                ImperialTrooperAnimationPlayer clipPlayer = importedRoot.AddComponent<ImperialTrooperAnimationPlayer>();
+                clipPlayer.Configure(importedRoot.transform, RuntimeTrooperAnimationSet);
+                if (clipPlayer.BoundTrackCount >= 12)
+                {
+                    usingSkeletalClips = true;
+                    Logger.LogInfo("Using retargeted skeletal animations on imported Stormtrooper model (" + clipPlayer.BoundTrackCount + " track bindings).");
+                }
+                else
+                {
+                    Destroy(clipPlayer);
+                    Logger.LogWarning("Retargeted animation clips matched only " + clipPlayer.BoundTrackCount + " tracks; reverting to procedural fallback.");
+                }
+            }
+            if (!usingSkeletalClips && boneMap.Count >= 8)
             {
                 ImperialTrooperProceduralAnimator animator = importedRoot.AddComponent<ImperialTrooperProceduralAnimator>();
                 animator.Configure(boneMap, importedRoot.transform);
-                Logger.LogInfo("Using imported Stormtrooper skin with procedural Mixamo-bone locomotion (" + boneMap.Count + " mapped body bones).");
+                Logger.LogInfo("Using imported Stormtrooper skin with procedural Mixamo-bone fallback locomotion (" + boneMap.Count + " mapped body bones).");
             }
-            else
+            else if (!usingSkeletalClips)
             {
                 Logger.LogWarning("Stormtrooper mesh loaded, but only " + boneMap.Count + " humanoid bones were mapped; walk cycle may be limited.");
             }
@@ -1315,12 +1348,14 @@ namespace ImperialTrooperMod
         private float nextTargetScanTime;
         private CharacterBody cachedTarget;
         private bool previouslyHadTarget;
+        private ImperialTrooperAnimationPlayer animationPlayer;
 
         internal void Configure(Transform muzzleTransform) { muzzle = muzzleTransform; }
 
         private void Awake()
         {
             body = GetComponent<CharacterBody>();
+            CacheAnimationPlayer();
             nextShotTime = Time.time + UnityEngine.Random.Range(0.6f, 1.8f);
             nextVoiceTime = Time.time + UnityEngine.Random.Range(0.2f, 1.2f);
             SilenceCopiedSkillStocks();
@@ -1329,6 +1364,19 @@ namespace ImperialTrooperMod
                 Transform root = GetComponent<ModelLocator>()?.modelTransform;
                 if (root != null) muzzle = root.Find("ImperialTrooperVisuals/Muzzle");
             }
+        }
+
+        private void CacheAnimationPlayer()
+        {
+            if (animationPlayer != null) return;
+            Transform root = GetComponent<ModelLocator>()?.modelTransform;
+            if (root != null) animationPlayer = root.GetComponentInChildren<ImperialTrooperAnimationPlayer>(true);
+        }
+
+        private ImperialTrooperAnimationPlayer GetAnimationPlayer()
+        {
+            if (animationPlayer == null) CacheAnimationPlayer();
+            return animationPlayer;
         }
 
         private void SilenceCopiedSkillStocks()
@@ -1352,17 +1400,20 @@ namespace ImperialTrooperMod
             CharacterBody target = cachedTarget;
             if (target == null || IsPlayerCloaked(target))
             {
+                GetAnimationPlayer()?.SetCombat(false);
                 cachedTarget = null;
                 previouslyHadTarget = false;
                 return;
             }
             if ((target.corePosition - body.corePosition).sqrMagnitude > DetectionRange * DetectionRange)
             {
+                GetAnimationPlayer()?.SetCombat(false);
                 cachedTarget = null;
                 previouslyHadTarget = false;
                 return;
             }
 
+            GetAnimationPlayer()?.SetCombat(true);
             Vector3 origin = muzzle != null ? muzzle.position : body.corePosition + Vector3.up * 1.2f;
             Vector3 targetPoint = target.corePosition + Vector3.up * 0.15f;
             Vector3 aim = targetPoint - origin;
@@ -1430,6 +1481,7 @@ namespace ImperialTrooperMod
         private void FireBlaster(Vector3 origin, Vector3 direction)
         {
             if (body == null || !body || body.healthComponent == null || !body.healthComponent.alive) return;
+            GetAnimationPlayer()?.PlayShot();
 
             // The projectile is deliberately slow enough to dodge at medium range; random angular error
             // prevents laser-perfect tracking. We still keep a safe low-damage fallback if a game build
