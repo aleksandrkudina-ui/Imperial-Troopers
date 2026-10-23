@@ -49,7 +49,7 @@ jobs:
           if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -eq "UAL1_Standard.fbx" } | Select-Object -First 1 }
           if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Where-Object { $_.Name -match "Standard.*\.(glb|fbx)$" } | Select-Object -First 1 }
           if (!$animationSourceFile) { $animationSourceFile = $animationFiles | Sort-Object Length -Descending | Select-Object -First 1 }
-          python -m pip install --disable-pip-version-check assimp_py
+          python -m pip install --disable-pip-version-check assimp_py pillow
           if ($LASTEXITCODE -ne 0) { throw "Could not install assimp_py for animation conversion" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$($animationSourceFile.FullName)" "$project/Assets/Stormtrooper.ianim"
           if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect clip and bone mapping output above" }
@@ -72,36 +72,84 @@ jobs:
           if ((Get-Item "$dir/Stormtrooper.ianim").Length -lt 10000) { throw "Retargeted Stormtrooper.ianim is unexpectedly small" }
           if (!(Test-Path "$dir/ANIMATION_LICENSE.txt")) { throw "Animation source license file is missing" }
           if (!(Test-Path "$dir/Audio")) { throw "Audio directory is missing" }
+          if (!(Test-Path "$dir/icon.png")) { throw "Thunderstore mod icon is missing" }
+          python -c "from PIL import Image; import sys; im=Image.open(sys.argv[1]); assert im.format == 'PNG' and im.size == (256,256), f'icon must be a 256x256 PNG, got {im.format} {im.size}'" "$dir/icon.png"
+          if ($LASTEXITCODE -ne 0) { throw "Thunderstore mod icon failed validation" }
           $audio = Get-ChildItem "$dir/Audio" -Filter *.mp3
           if ($audio.Count -lt 1) { throw "No MP3 audio files were packaged" }
 
-      - name: Create Thunderstore plugin ZIP
+      - name: Generate mod icon
         shell: pwsh
         run: |
           $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
-          $zipPath = "ImperialTroopers_0.3.9_build.zip"
-          Compress-Archive -Path "$dir/*" -DestinationPath $zipPath -Force
-          if (!(Test-Path $zipPath)) { throw "Thunderstore plugin ZIP was not created" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/make_mod_icon.py" "$dir/icon.png"
+          if ($LASTEXITCODE -ne 0) { throw "Could not create Thunderstore icon" }
+
+      - name: Create Thunderstore package ZIP
+        shell: pwsh
+        run: |
+          $dir = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper"
+          $packageRoot = Join-Path $env:RUNNER_TEMP "ImperialTroopersPackage"
+          if (Test-Path $packageRoot) { Remove-Item -Recurse -Force $packageRoot }
+          New-Item -ItemType Directory -Path $packageRoot | Out-Null
+          Copy-Item -Path "$dir/*" -Destination $packageRoot -Recurse -Force
+
+          $manifest = @{
+            name = "ImperialTroopers"
+            version_number = "0.3.10"
+            website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
+            description = "Risk of Rain 2 enemy mod adding Imperial troopers with blaster burst fire, tactical positioning, skeletal animations and radio chatter."
+            dependencies = @(
+              "RiskofThunder-RoR2BepInExPack-1.48.0",
+              "RiskofThunder-R2API_Director-3.1.2",
+              "RiskofThunder-R2API_Prefab-1.1.1",
+              "RiskofThunder-R2API_ContentManagement-1.1.0"
+            )
+          } | ConvertTo-Json -Depth 4
+          [System.IO.File]::WriteAllText((Join-Path $packageRoot "manifest.json"), $manifest + "`n", [System.Text.UTF8Encoding]::new($false))
+
+          $readme = @'
+          # Imperial Troopers
+
+          Adds hostile Imperial stormtrooper enemies to Risk of Rain 2.
+
+          ## Features
+          - Custom rigged stormtrooper model and skeletal animation clips.
+          - Slower red blaster bolts and controlled burst fire.
+          - Positional infantry behavior that tries to maintain a firing range and only repositions briefly when its line of fire is blocked.
+          - Blaster audio and radio chatter.
+
+          ## Installation
+          Import this ZIP through Thunderstore Mod Manager's **Settings → Profile → Import local mod**.
+
+          ## Notes
+          This is a development build. Verify enemy behavior and audio in-game after installing.
+          '@
+          [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
+
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.10.zip"
+          Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
+          if (!(Test-Path $zipPath)) { throw "Thunderstore package ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
           try {
             $entryNames = @($zip.Entries | ForEach-Object { $_.FullName })
-            $required = @("ImperialTrooper.dll", "Stormtrooper.imodel", "Stormtrooper.ianim", "ANIMATION_LICENSE.txt")
+            $required = @("manifest.json", "README.md", "icon.png", "ImperialTrooper.dll", "Stormtrooper.imodel", "Stormtrooper.ianim", "ANIMATION_LICENSE.txt")
             foreach ($name in $required) {
               if ($entryNames -notcontains $name) { throw "Thunderstore ZIP is missing required entry: $name" }
             }
             if (!($entryNames | Where-Object { $_ -like "Audio/*.mp3" })) { throw "Thunderstore ZIP contains no packaged MP3 audio files" }
-            Write-Host ("Validated ZIP entries: " + ($entryNames -join ", "))
+            Write-Host ("Validated Thunderstore package entries: " + ($entryNames -join ", "))
           }
           finally { $zip.Dispose() }
-          if ((Get-Item $zipPath).Length -lt 100000) { throw "Thunderstore plugin ZIP is unexpectedly small" }
+          if ((Get-Item $zipPath).Length -lt 100000) { throw "Thunderstore package ZIP is unexpectedly small" }
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.9-build
+          name: ImperialTroopers-0.3.10-package
           path: |
-            ImperialTroopers_0.3.9_build.zip
+            PyramidHead-ImperialTroopers-0.3.10.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
