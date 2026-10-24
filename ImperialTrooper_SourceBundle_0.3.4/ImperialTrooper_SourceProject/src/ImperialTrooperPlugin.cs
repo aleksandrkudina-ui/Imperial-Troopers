@@ -28,13 +28,13 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.17";
+        public const string PluginVersion = "0.3.18";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
         internal static GameObject BlasterBoltPrefab;
         internal static Material BlasterBoltMaterial;
-        internal const float BlasterBoltSpeed = 36f;
+        internal const float BlasterBoltSpeed = 24f;
         internal static GameObject[] AudioEffectPrefabs = Array.Empty<GameObject>();
         internal static GameObject TrooperMasterPrefab;
         private static AssetBundle ImportedTrooperAssetBundle;
@@ -42,7 +42,6 @@ namespace ImperialTrooperMod
         private static ImperialTrooperRuntimeModelData RuntimeTrooperModelData;
         internal static ImperialTrooperAnimationSet RuntimeTrooperAnimationSet;
         internal static AudioClip BlasterShotClip;
-        internal static AudioClip BlasterBurstClip;
         internal static AudioClip RadioContactClip;
         internal static AudioClip RadioTargetAcquiredClip;
         internal static AudioClip RadioMaintainFormationClip;
@@ -135,7 +134,7 @@ namespace ImperialTrooperMod
                 }
 
                 if (!player.enabled) player.enabled = true;
-                player.PumpFromPlugin();
+                player.PrepareFromPlugin();
                 tickedPlayers++;
             }
 
@@ -146,8 +145,8 @@ namespace ImperialTrooperMod
                 if (tickedPlayers > 0 && !animationPumpWarnings.Contains(-1))
                 {
                     animationPumpWarnings.Add(-1);
-                    Logger.LogInfo("Central animation pump active: trooperBodies=" + foundBodies +
-                        ", animationPlayersUpdated=" + tickedPlayers + " (server and client visual instances).");
+                    Logger.LogInfo("Central animation preflight active: trooperBodies=" + foundBodies +
+                        ", animationPlayersPrepared=" + tickedPlayers + "; skeletal poses are applied in late frame after model updates.");
                 }
             }
         }
@@ -246,6 +245,32 @@ namespace ImperialTrooperMod
         private string ResolveAudioAssetPath(string fileName)
         {
             string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
+            bool isRadioAsset = fileName.StartsWith("Radio_", StringComparison.OrdinalIgnoreCase) ||
+                                fileName.Equals("Comms_Beep.wav", StringComparison.OrdinalIgnoreCase) ||
+                                fileName.Equals("Blaster_Burst.wav", StringComparison.OrdinalIgnoreCase);
+
+            // Radio/dialogue is intentionally user-overridable. The package does not redistribute
+            // Lucasfilm dialogue; never play the old synthetic mechanical placeholders as voice lines.
+            if (isRadioAsset)
+            {
+                string overridePath = IOPath.Combine(pluginDirectory, "Audio", "Overrides", fileName);
+                if (File.Exists(overridePath))
+                {
+                    Logger.LogInfo("Using local radio audio override: " + fileName);
+                    return overridePath;
+                }
+
+                string flattenedOverridePath = IOPath.Combine(pluginDirectory, "Overrides", fileName);
+                if (File.Exists(flattenedOverridePath))
+                {
+                    Logger.LogInfo("Using flattened local radio audio override: " + fileName);
+                    return flattenedOverridePath;
+                }
+
+                Logger.LogInfo("No local radio override supplied for " + fileName + "; this cue remains silent.");
+                return null;
+            }
+
             string nestedPath = IOPath.Combine(pluginDirectory, "Audio", fileName);
             if (File.Exists(nestedPath)) return nestedPath;
 
@@ -266,7 +291,6 @@ namespace ImperialTrooperMod
             string pluginDirectory = IOPath.GetDirectoryName(Info.Location) ?? Paths.PluginPath;
             Logger.LogInfo("Loading trooper audio from plugin directory: " + pluginDirectory);
             yield return LoadAudio(ResolveAudioAssetPath("Blaster_Shot.wav"));
-            yield return LoadAudio(ResolveAudioAssetPath("Blaster_Burst.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Blaster_Impact.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_ContactFront.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_TargetAcquired.wav"));
@@ -274,16 +298,17 @@ namespace ImperialTrooperMod
             yield return LoadAudio(ResolveAudioAssetPath("Radio_TrooperDown.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Radio_Static.wav"));
             yield return LoadAudio(ResolveAudioAssetPath("Comms_Beep.wav"));
-            int loaded = new AudioClip[] { BlasterShotClip, BlasterBurstClip, BlasterImpactClip, RadioContactClip, RadioTargetAcquiredClip,
+            int loaded = new AudioClip[] { BlasterShotClip, BlasterImpactClip, RadioContactClip, RadioTargetAcquiredClip,
                 RadioMaintainFormationClip, RadioTrooperDownClip, RadioStaticClip, CommsBeepClip }.Count(c => c != null);
-            Logger.LogInfo("Trooper audio initialization finished: " + loaded + "/9 clips loaded. Shot=" + (BlasterShotClip != null) +
-                ", Burst=" + (BlasterBurstClip != null) + ", Impact=" + (BlasterImpactClip != null) +
-                ", Contact voice=" + (RadioContactClip != null) + ", target voice=" + (RadioTargetAcquiredClip != null) +
-                ", formation voice=" + (RadioMaintainFormationClip != null) + ", trooper-down voice=" + (RadioTrooperDownClip != null) + ".");
+            Logger.LogInfo("Trooper audio initialization finished: " + loaded + "/8 non-empty clips loaded. Shot=" + (BlasterShotClip != null) +
+                ", Impact=" + (BlasterImpactClip != null) + ", Contact voice override=" + (RadioContactClip != null) +
+                ", target voice override=" + (RadioTargetAcquiredClip != null) + ", formation voice override=" + (RadioMaintainFormationClip != null) +
+                ", trooper-down voice override=" + (RadioTrooperDownClip != null) + ".");
         }
 
         private IEnumerator LoadAudio(string path)
         {
+            if (string.IsNullOrEmpty(path)) yield break;
             if (!File.Exists(path))
             {
                 Logger.LogWarning("Optional audio file was not found: " + path);
@@ -330,7 +355,6 @@ namespace ImperialTrooperMod
             string file = IOPath.GetFileName(path);
             loadedClip.name = IOPath.GetFileNameWithoutExtension(file);
             if (file.Equals("Blaster_Shot.wav", StringComparison.OrdinalIgnoreCase)) BlasterShotClip = loadedClip;
-            else if (file.Equals("Blaster_Burst.wav", StringComparison.OrdinalIgnoreCase)) BlasterBurstClip = loadedClip;
             else if (file.Equals("Radio_ContactFront.wav", StringComparison.OrdinalIgnoreCase)) RadioContactClip = loadedClip;
             else if (file.Equals("Radio_TargetAcquired.wav", StringComparison.OrdinalIgnoreCase)) RadioTargetAcquiredClip = loadedClip;
             else if (file.Equals("Radio_MaintainFormation.wav", StringComparison.OrdinalIgnoreCase)) RadioMaintainFormationClip = loadedClip;
@@ -377,11 +401,11 @@ namespace ImperialTrooperMod
             source.clip = clip;
             source.playOnAwake = false;
             source.loop = false;
-            source.volume = Mathf.Clamp01(volume);
-            source.spatialBlend = radio ? 0.12f : 0.72f;
+            source.volume = Mathf.Clamp01(radio ? volume : Mathf.Max(volume, 0.86f));
+            source.spatialBlend = radio ? 0.10f : 0.88f;
             source.rolloffMode = AudioRolloffMode.Linear;
-            source.minDistance = radio ? 5f : 2f;
-            source.maxDistance = radio ? 55f : 42f;
+            source.minDistance = radio ? 6f : 4f;
+            source.maxDistance = radio ? 55f : 85f;
             source.dopplerLevel = 0f;
             source.spread = radio ? 12f : 0f;
             source.Play();
@@ -400,14 +424,13 @@ namespace ImperialTrooperMod
                 case 5: return CommsBeepClip;
                 case 6: return BlasterImpactClip;
                 case 7: return RadioStaticClip;
-                case 8: return BlasterBurstClip;
                 default: return null;
             }
         }
 
         internal static float GetAudioVolume(int kind)
         {
-            switch (kind) { case 0: return .72f; case 1: case 2: case 3: return .94f; case 4: return .90f; case 5: return .28f; case 6: return .55f; case 7: return .25f; case 8: return .78f; default: return .35f; }
+            switch (kind) { case 0: return .72f; case 1: case 2: case 3: return .94f; case 4: return .90f; case 5: return .28f; case 6: return .55f; case 7: return .25f; default: return .35f; }
         }
 
         private static int GetAudioKind(AudioClip clip)
@@ -420,14 +443,13 @@ namespace ImperialTrooperMod
             if (clip == CommsBeepClip) return 5;
             if (clip == BlasterImpactClip) return 6;
             if (clip == RadioStaticClip) return 7;
-            if (clip == BlasterBurstClip) return 8;
             return -1;
         }
 
         private void RegisterNetworkedAudioEffects()
         {
-            AudioEffectPrefabs = new GameObject[9];
-            string[] names = { "BlasterShot", "RadioContact", "RadioTarget", "RadioFormation", "TrooperDown", "CommsBeep", "BlasterImpact", "RadioStatic", "BlasterBurst" };
+            AudioEffectPrefabs = new GameObject[8];
+            string[] names = { "BlasterShot", "RadioContact", "RadioTarget", "RadioFormation", "TrooperDown", "CommsBeep", "BlasterImpact", "RadioStatic" };
             for (int i = 0; i < AudioEffectPrefabs.Length; i++)
             {
                 GameObject prefab = new GameObject("ImperialTrooperAudio_" + names[i]);
@@ -570,26 +592,19 @@ namespace ImperialTrooperMod
         {
             if (controller == null) return null;
             if (controller.ghostPrefab != null) return controller.ghostPrefab;
+
+            // RoR2 1.5 moved vanilla projectile ghosts to ProjectileController.ghostPrefabAddress.
+            // Calling AssetReference.LoadAssetAsync is the supported path; reading RuntimeKey via
+            // reflection and then passing it to a second Addressables request can return the wrong asset.
             try
             {
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                Type type = controller.GetType();
-                FieldInfo field = null;
-                while (type != null && field == null)
-                {
-                    field = type.GetField("ghostPrefabAddress", flags | BindingFlags.DeclaredOnly);
-                    type = type.BaseType;
-                }
-                object addressReference = field != null ? field.GetValue(controller) : null;
-                PropertyInfo runtimeKeyProperty = addressReference != null ? addressReference.GetType().GetProperty("RuntimeKey", flags) : null;
-                object runtimeKey = runtimeKeyProperty != null ? runtimeKeyProperty.GetValue(addressReference, null) : null;
-                if (runtimeKey != null)
-                {
-                    GameObject loadedGhost = Addressables.LoadAssetAsync<GameObject>(runtimeKey).WaitForCompletion();
-                    if (loadedGhost != null) return loadedGhost;
-                }
+                if (controller.ghostPrefabAddress != null)
+                    return controller.ghostPrefabAddress.LoadAssetAsync().WaitForCompletion();
             }
-            catch (Exception ex) { Logger.LogDebug("Could not resolve FMJ ghost address: " + ex.Message); }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("Could not load FMJ ghostPrefabAddress: " + ex.Message);
+            }
             return null;
         }
 
@@ -673,17 +688,16 @@ namespace ImperialTrooperMod
                 foreach (Renderer renderer in BlasterBoltPrefab.GetComponentsInChildren<Renderer>(true))
                     if (renderer != null) renderer.enabled = false;
 
-                // RoR2 1.5 may ignore the legacy GameObject ghost reference on clients. Keep the
-                // projectile's visible red bolt attached to the moving projectile prefab itself.
-                // This is also a robust fallback if the addressable ghost changes between game builds.
+                // Use RoR2's projectile-ghost pipeline. The visual must follow ProjectileGhostController,
+                // not be rendered as a capsule on the projectile body (that was the source of the floaty look).
+                GameObject customGhost = CreateRedBlasterGhost(sourceGhost, BlasterBoltMaterial);
                 ClearProjectileGhostReferences(controller);
-                ImperialTrooperBoltVisual boltVisual = BlasterBoltPrefab.GetComponent<ImperialTrooperBoltVisual>();
-                if (boltVisual == null) boltVisual = BlasterBoltPrefab.AddComponent<ImperialTrooperBoltVisual>();
-                boltVisual.Initialize(BlasterBoltMaterial);
+                controller.ghostPrefab = customGhost;
+                controller.startSound = string.Empty;
                 ContentAddition.AddProjectile(BlasterBoltPrefab);
 
-                Logger.LogInfo("Registered straight E-11 bolt from FMJRamping: speed=" + BlasterBoltSpeed +
-                    " m/s, lifetime=2.5 s, direct overlap damage enabled, no explosion/wobble/steering components.");
+                Logger.LogInfo("Registered FMJRamping-based red E-11 bolt: ghost=ImperialTrooperRedBoltGhost, speed=" +
+                    BlasterBoltSpeed + " m/s, lifetime=2.5 s, direct overlap damage preserved, no explosion/wobble/steering.");
             }
             catch (Exception ex)
             {
@@ -1049,35 +1063,62 @@ namespace ImperialTrooperMod
             if (boneMap.TryGetValue(HumanBodyBones.Head, out Transform head) && head != null)
                 visor.transform.SetParent(head, true);
 
-            // The supplied mesh has no weapon mesh, so add a small procedural E-11-like prop near
-            // the right hand; it follows the mapped hand bone and provides a visible firing muzzle.
+            // The mesh asset is a bare armored body, so build a recognizable E-11-style rifle:
+            // tubular barrel/flash hider, ribbed Sterling-style handguard, stock, pistol grip, power cell and scope.
+            // The imported character faces -Z. Gun geometry extends along local -Z, so align its +Z
+            // axis to the character's +Z; do not guess a 90-degree wrist rotation.
             if (boneMap.TryGetValue(HumanBodyBones.RightHand, out Transform rightHand) && rightHand != null)
             {
-                Material gunDark = BuildMaterial("Imperial_RuntimeBlasterDark", new Color(0.025f, 0.035f, 0.040f), 0.35f, 0.38f, ceramic);
-                Material gunMetal = BuildMaterial("Imperial_RuntimeBlasterMetal", new Color(0.20f, 0.23f, 0.24f), 0.58f, 0.4f, ceramic);
+                Material gunDark = BuildMaterial("Imperial_RuntimeBlasterDark", new Color(0.018f, 0.024f, 0.028f), 0.26f, 0.34f, ceramic);
+                Material gunMetal = BuildMaterial("Imperial_RuntimeBlasterMetal", new Color(0.12f, 0.14f, 0.15f), 0.62f, 0.43f, ceramic);
+                Material gunRubber = BuildMaterial("Imperial_RuntimeBlasterRubber", new Color(0.035f, 0.040f, 0.042f), 0.05f, 0.22f, ceramic);
                 GameObject gun = new GameObject("ImperialTrooperE11Blaster");
                 gun.transform.SetParent(rightHand, false);
-                gun.transform.localPosition = new Vector3(0f, 0.015f, 0.025f);
-                gun.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-                gun.transform.localScale = Vector3.one;
-                CreateRuntimePart(gun.transform, "E11_Receiver", PrimitiveType.Cube, new Vector3(0f, 0f, -0.08f), new Vector3(0.14f, 0.10f, 0.30f), gunDark, Quaternion.identity);
-                CreateRuntimePart(gun.transform, "E11_Barrel", PrimitiveType.Cylinder, new Vector3(0f, 0.005f, -0.31f), new Vector3(0.031f, 0.13f, 0.031f), gunMetal, Quaternion.Euler(-90f, 0f, 0f));
-                CreateRuntimePart(gun.transform, "E11_Stock", PrimitiveType.Cube, new Vector3(0f, 0.005f, 0.12f), new Vector3(0.12f, 0.085f, 0.13f), gunMetal, Quaternion.identity);
-                CreateRuntimePart(gun.transform, "E11_Grip", PrimitiveType.Cube, new Vector3(0f, -0.075f, 0.015f), new Vector3(0.065f, 0.12f, 0.075f), gunDark, Quaternion.identity);
-                CreateRuntimePart(gun.transform, "E11_PowerCell", PrimitiveType.Cube, new Vector3(0.075f, -0.015f, -0.10f), new Vector3(0.045f, 0.075f, 0.13f), gunMetal, Quaternion.identity);
-                CreateRuntimePart(gun.transform, "E11_TopRail", PrimitiveType.Cube, new Vector3(0f, 0.065f, -0.09f), new Vector3(0.055f, 0.025f, 0.20f), gunMetal, Quaternion.identity);
+                gun.transform.localScale = Vector3.one * 1.7f;
+                gun.transform.position = rightHand.position + importedRoot.transform.up * 0.018f + importedRoot.transform.forward * 0.025f;
+                gun.transform.rotation = Quaternion.LookRotation(importedRoot.transform.forward, importedRoot.transform.up);
+
+                CreateRuntimePart(gun.transform, "E11_Receiver", PrimitiveType.Cube,
+                    new Vector3(0f, 0f, -0.105f), new Vector3(0.115f, 0.085f, 0.265f), gunDark, Quaternion.identity);
+                CreateRuntimePart(gun.transform, "E11_Handguard", PrimitiveType.Cube,
+                    new Vector3(0f, -0.002f, -0.265f), new Vector3(0.095f, 0.068f, 0.235f), gunRubber, Quaternion.identity);
+                CreateRuntimePart(gun.transform, "E11_Barrel", PrimitiveType.Cylinder,
+                    new Vector3(0f, -0.002f, -0.405f), new Vector3(0.025f, 0.105f, 0.025f), gunMetal, Quaternion.Euler(-90f, 0f, 0f));
+                CreateRuntimePart(gun.transform, "E11_FlashHider", PrimitiveType.Cylinder,
+                    new Vector3(0f, -0.002f, -0.505f), new Vector3(0.036f, 0.023f, 0.036f), gunDark, Quaternion.Euler(-90f, 0f, 0f));
+                CreateRuntimePart(gun.transform, "E11_Stock", PrimitiveType.Cube,
+                    new Vector3(0f, 0.006f, 0.145f), new Vector3(0.105f, 0.070f, 0.155f), gunRubber, Quaternion.identity);
+                CreateRuntimePart(gun.transform, "E11_PistolGrip", PrimitiveType.Cube,
+                    new Vector3(0f, -0.078f, 0.017f), new Vector3(0.060f, 0.112f, 0.070f), gunRubber, Quaternion.identity);
+                CreateRuntimePart(gun.transform, "E11_PowerCell", PrimitiveType.Cube,
+                    new Vector3(0.068f, -0.025f, -0.145f), new Vector3(0.040f, 0.080f, 0.122f), gunMetal, Quaternion.identity);
+                CreateRuntimePart(gun.transform, "E11_TopRail", PrimitiveType.Cube,
+                    new Vector3(0f, 0.050f, -0.135f), new Vector3(0.040f, 0.018f, 0.265f), gunMetal, Quaternion.identity);
+                CreateRuntimePart(gun.transform, "E11_ScopeTube", PrimitiveType.Cylinder,
+                    new Vector3(0f, 0.092f, -0.145f), new Vector3(0.031f, 0.058f, 0.031f), gunDark, Quaternion.Euler(-90f, 0f, 0f));
+                CreateRuntimePart(gun.transform, "E11_ScopeCap", PrimitiveType.Cylinder,
+                    new Vector3(0f, 0.092f, -0.205f), new Vector3(0.036f, 0.010f, 0.036f), gunMetal, Quaternion.Euler(-90f, 0f, 0f));
+                CreateRuntimePart(gun.transform, "E11_ChargingHandle", PrimitiveType.Cube,
+                    new Vector3(0.066f, 0.020f, -0.105f), new Vector3(0.018f, 0.025f, 0.064f), gunMetal, Quaternion.identity);
+                for (int vent = 0; vent < 6; vent++)
+                {
+                    CreateRuntimePart(gun.transform, "E11_CoolingRib_" + vent, PrimitiveType.Cube,
+                        new Vector3(0f, 0.038f, -0.192f - vent * 0.026f),
+                        new Vector3(0.100f, 0.008f, 0.012f), gunMetal, Quaternion.identity);
+                }
+
                 GameObject muzzle = new GameObject("Muzzle");
                 muzzle.transform.SetParent(gun.transform, false);
-                muzzle.transform.localPosition = new Vector3(0f, 0.005f, -0.45f);
+                muzzle.transform.localPosition = new Vector3(0f, -0.002f, -0.54f);
                 muzzle.transform.localRotation = Quaternion.identity;
-                // Keep the E-11 in hand-local space; preserving the former root offset put it outside the silhouette.
+
+                Logger.LogInfo("Attached E-11 procedural prop to rig RightHand bone '" + rightHand.name +
+                    "'; muzzle position in imported-root space=" +
+                    importedRoot.transform.InverseTransformPoint(muzzle.transform.position).ToString("F2") + ".");
             }
             else
             {
-                Logger.LogWarning("Stormtrooper rig has no mapped RightHand; visible blaster prop was skipped.");
-                GameObject muzzle = new GameObject("Muzzle");
-                muzzle.transform.SetParent(importedRoot.transform, false);
-                muzzle.transform.localPosition = new Vector3(0f, 2.0f, -0.4f);
+                Logger.LogError("Stormtrooper rig has no mapped RightHand; no rifle or muzzle was created.");
             }
 
             bool usingSkeletalClips = false;
@@ -1892,22 +1933,58 @@ namespace ImperialTrooperMod
         private bool previouslyHadTarget;
         private ImperialTrooperAnimationPlayer animationPlayer;
 
-        internal void Configure(Transform muzzleTransform) { muzzle = muzzleTransform; }
+        internal void Configure(Transform muzzleTransform) { muzzle = null; }
 
         private void Awake()
         {
             body = GetComponent<CharacterBody>();
+            // Resolve from this spawned body's actual model hierarchy. The muzzle captured while
+            // constructing a prefab is not a reliable runtime reference after RoR2 clones the body.
+            muzzle = ResolveLiveMuzzle();
             CacheAnimationPlayer();
-            assignedPreferredRange = PreferredRange + UnityEngine.Random.Range(-1.6f, 1.6f);
+            assignedPreferredRange = PreferredRange + UnityEngine.Random.Range(-0.6f, 0.6f);
             nextShotTime = Time.time + UnityEngine.Random.Range(0.7f, 1.6f);
             nextBurstShotTime = nextShotTime;
-            nextVoiceTime = Time.time + UnityEngine.Random.Range(0.6f, 1.7f);
+            nextVoiceTime = Time.time + UnityEngine.Random.Range(1.2f, 2.6f);
             SilenceCopiedSkillStocks();
+
             if (muzzle == null)
+                ImperialTrooperPlugin.LogSource?.LogError("Spawned trooper " + GetInstanceID() + " has no live Muzzle transform; firing is disabled for this instance.");
+            else
+                ImperialTrooperPlugin.LogSource?.LogInfo("Bound spawned trooper " + GetInstanceID() + " to live muzzle '" +
+                    muzzle.name + "' at body-local position " + transform.InverseTransformPoint(muzzle.position).ToString("F2") + ".");
+        }
+
+        private Transform ResolveLiveMuzzle()
+        {
+            Transform root = null;
+            ModelLocator locator = GetComponent<ModelLocator>();
+            if (locator != null) root = locator.modelTransform;
+            if (root == null)
             {
-                Transform root = GetComponent<ModelLocator>()?.modelTransform;
-                if (root != null) muzzle = root.Find("ImperialTrooperVisuals/Muzzle");
+                CharacterModel characterModel = GetComponentInChildren<CharacterModel>(true);
+                if (characterModel != null) root = characterModel.transform;
             }
+
+            if (root != null)
+            {
+                Transform[] liveTransforms = root.GetComponentsInChildren<Transform>(true);
+                for (int i = 0; i < liveTransforms.Length; i++)
+                {
+                    Transform candidate = liveTransforms[i];
+                    if (candidate != null && string.Equals(candidate.name, "Muzzle", StringComparison.Ordinal))
+                        return candidate;
+                }
+            }
+
+            Transform[] bodyTransforms = GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < bodyTransforms.Length; i++)
+            {
+                Transform candidate = bodyTransforms[i];
+                if (candidate != null && string.Equals(candidate.name, "Muzzle", StringComparison.Ordinal))
+                    return candidate;
+            }
+            return null;
         }
 
         private void CacheAnimationPlayer()
@@ -1990,7 +2067,15 @@ namespace ImperialTrooperMod
             }
 
             GetAnimationPlayer()?.SetCombat(true);
-            Vector3 origin = muzzle != null ? muzzle.position : body.corePosition + Vector3.up * 1.2f;
+            if (muzzle == null || !muzzle.gameObject.activeInHierarchy)
+                muzzle = ResolveLiveMuzzle();
+            if (muzzle == null)
+            {
+                SetMoveVector(Vector3.zero);
+                return;
+            }
+
+            Vector3 origin = muzzle.position;
             Vector3 targetPoint = target.corePosition + Vector3.up * 0.15f;
             Vector3 aim = targetPoint - origin;
             if (aim.sqrMagnitude < 0.01f) return;
@@ -2002,6 +2087,12 @@ namespace ImperialTrooperMod
             {
                 input.aimDirection = aim.normalized;
                 UpdateTacticalMovement(input, target.corePosition - body.corePosition, planarDistance, origin, targetPoint);
+                Vector3 planarAim = new Vector3(aim.x, 0f, aim.z);
+                CharacterDirection characterDirection = body.characterDirection;
+                if (characterDirection != null && planarAim.sqrMagnitude > 0.001f)
+                    characterDirection.forward = Vector3.Slerp(characterDirection.forward, planarAim.normalized,
+                        Mathf.Clamp01(Time.fixedDeltaTime * 5f)).normalized;
+                GetAnimationPlayer()?.SetAimDirection(aim.normalized);
             }
 
             if (Time.time > nextVoiceTime)
@@ -2098,11 +2189,10 @@ namespace ImperialTrooperMod
             };
             ProjectileManager.instance.FireProjectile(info);
 
-            // Use the actual burst cue once per three-shot sequence; don't replay the short single
-            // mechanical click on every projectile.
-            if (playBurstSound)
-                ImperialTrooperPlugin.PlayClip(ImperialTrooperPlugin.BlasterBurstClip != null
-                    ? ImperialTrooperPlugin.BlasterBurstClip : ImperialTrooperPlugin.BlasterShotClip, origin, 0.78f);
+            // The burst is already three separately simulated projectiles. Play the actual CC0-style
+            // blaster shot once per bolt; do not substitute the old mechanical "burst" placeholder.
+            if (ImperialTrooperPlugin.BlasterShotClip != null)
+                ImperialTrooperPlugin.PlayClip(ImperialTrooperPlugin.BlasterShotClip, origin, 0.92f);
         }
     }
 }

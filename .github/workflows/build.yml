@@ -3,7 +3,7 @@ name: Build Imperial Troopers
 on:
   workflow_dispatch:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "fix/0.3.18-e11-ai-audio-audit" ]
 
 permissions:
   contents: read
@@ -25,6 +25,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Download CC0 Star-Wars-style blaster Foley
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $project = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject"
+          $audioDirectory = Join-Path $project "Audio"
+          New-Item -ItemType Directory -Path $audioDirectory -Force | Out-Null
+          $licensedSource = Join-Path $audioDirectory "Blaster_Shot.mp3"
+          $licensedUrl = "https://bigsoundbank.com/UPLOAD/mp3/1759.mp3"
+          Invoke-WebRequest -Uri $licensedUrl -OutFile $licensedSource -Headers @{ "User-Agent" = "ImperialTroopers-CC0-Audio/0.3.18" }
+          if (!(Test-Path $licensedSource) -or (Get-Item $licensedSource).Length -lt 3000) {
+            throw "Licensed CC0 blaster Foley download failed or returned an unexpectedly small file."
+          }
+          Write-Host ("Downloaded CC0 Foley sound #1759 by Joseph SARDIN from BigSoundBank (" + (Get-Item $licensedSource).Length + " bytes). It is licensed Foley, not an official Lucasfilm master recording.")
+
       - name: Generate skeletal animation clips
         shell: pwsh
         run: |
@@ -34,7 +49,7 @@ jobs:
           New-Item -ItemType Directory -Path $assetDirectory -Force | Out-Null
           $animationSource = Join-Path $assetDirectory "UAL1_Standard.glb"
           $animationSourceUrl = "https://raw.githubusercontent.com/Barbatos6669/elderforge/bb2ce469f0ab2ccfc487faef55550ba07fae2483/assets/animations/universal_animation_library_1/UAL1_Standard.glb"
-          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.17" }
+          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.18" }
           if (!(Test-Path $animationSource) -or (Get-Item $animationSource).Length -lt 1000000) { throw "Pinned CC0 UAL1 Standard GLB download is missing or unexpectedly small" }
           Write-Host ("Using pinned CC0 Quaternius UAL1 source from " + $animationSourceUrl + " (" + (Get-Item $animationSource).Length + " bytes)")
           $animationSourceFile = Get-Item $animationSource
@@ -46,6 +61,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect clip and bone mapping output above" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/convert_audio_to_wav.py" "$project/Audio"
           if ($LASTEXITCODE -ne 0) { throw "MP3 to WAV conversion failed; the game needs Unity-compatible PCM audio" }
+          python -c "import wave,sys; p=sys.argv[1]; w=wave.open(p,'rb'); assert w.getnframes()>4000, 'blaster clip too short'; assert w.getframerate()==44100, f'unexpected sample rate {w.getframerate()}'; assert w.getsampwidth()==2, f'unexpected PCM width {w.getsampwidth()}'; assert w.getnchannels() in (1,2), f'unexpected channel count {w.getnchannels()}'; print(f'Validated CC0 blaster WAV: {w.getnframes()/w.getframerate():.3f}s, {w.getframerate()} Hz, {w.getnchannels()} channel(s), PCM16') " "$project/Audio/Blaster_Shot.wav"
+          if ($LASTEXITCODE -ne 0) { throw "Downloaded blaster WAV failed PCM/duration validation" }
 
       - name: Restore
         working-directory: ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject
@@ -54,6 +71,38 @@ jobs:
       - name: Build Release
         working-directory: ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject
         run: dotnet build ImperialTrooperMod.csproj --configuration Release --no-restore
+
+      - name: Validate runtime behavior contracts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pluginPath = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/src/ImperialTrooperPlugin.cs"
+          $animPath = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/src/ImperialTrooperRuntimeAnimation.cs"
+          $plugin = Get-Content $pluginPath -Raw
+          $anim = Get-Content $animPath -Raw
+          $checks = @(
+            @{ Name = "RoR2 FMJ straight projectile"; Text = $plugin; Pattern = 'FMJRamping\.prefab' },
+            @{ Name = "Direct hitbox damage pipeline"; Text = $plugin; Pattern = 'ProjectileOverlapAttack overlap' },
+            @{ Name = "Native projectile ghost"; Text = $plugin; Pattern = 'controller\.ghostPrefab = customGhost' },
+            @{ Name = "Live muzzle resolution"; Text = $plugin; Pattern = 'ResolveLiveMuzzle\(\)' },
+            @{ Name = "Two-handed E-11"; Text = $plugin; Pattern = 'E11_ScopeTube' },
+            @{ Name = "Aim direction passed into animation"; Text = $plugin; Pattern = 'SetAimDirection\(aim\.normalized\)' },
+            @{ Name = "Late-frame skeletal application"; Text = $anim; Pattern = 'Apply after RoR2 has finished updating' },
+            @{ Name = "Two-bone rifle grip"; Text = $anim; Pattern = 'ApplyTwoBoneGripIk' },
+            @{ Name = "Death clip"; Text = $anim; Pattern = 'entered death clip' }
+          )
+          foreach ($check in $checks) {
+            if ($check.Text -notmatch $check.Pattern) { throw "Runtime contract failed: $($check.Name)" }
+            Write-Host ("Validated runtime contract: " + $check.Name)
+          }
+          $start = $plugin.IndexOf("private void TryRegisterBlasterBolt()")
+          $end = $plugin.IndexOf("private void AddBoltTrail", $start)
+          if ($start -lt 0 -or $end -le $start) { throw "Could not isolate projectile registration for static validation." }
+          $tryBolt = $plugin.Substring($start, $end - $start)
+          if ($tryBolt -match 'ImperialTrooperBoltVisual\s+boltVisual') { throw "Old root-attached floating capsule remains on the projectile body." }
+          if ($tryBolt -match 'CommandoGrenadeProjectile|LunarGolemTwinShotProjectile') { throw "Forbidden grenade/Lunar-Golem projectile fallback remains." }
+          if ($tryBolt -match 'BulletAttack\s+attack') { throw "Instant hitscan fallback remains in projectile registration." }
+          Write-Host "Validated: no grenade/Lunar-Golem/hitscan fallback in blaster registration."
 
       - name: Generate mod icon
         shell: pwsh
@@ -76,7 +125,8 @@ jobs:
           python -c "from PIL import Image; import sys; im=Image.open(sys.argv[1]); assert im.format == 'PNG' and im.size == (256,256), f'icon must be a 256x256 PNG, got {im.format} {im.size}'" "$dir/icon.png"
           if ($LASTEXITCODE -ne 0) { throw "Thunderstore mod icon failed validation" }
           $audio = Get-ChildItem "$dir/Audio" -Filter *.wav
-          if ($audio.Count -lt 1) { throw "Fewer than eight PCM WAV audio files were packaged" }
+          if ($audio.Count -lt 1) { throw "No PCM WAV audio file was packaged" }
+          if (!(Test-Path "$dir/Audio/Blaster_Shot.wav")) { throw "Licensed CC0 blaster shot WAV is missing" }
 
       - name: Create Thunderstore package ZIP
         shell: pwsh
@@ -89,9 +139,9 @@ jobs:
 
           $manifest = @{
             name = "ImperialTroopers"
-            version_number = "0.3.17"
+            version_number = "0.3.18"
             website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
-            description = "Risk of Rain 2 enemy mod adding Imperial troopers with blaster burst fire, tactical positioning, skeletal animations and radio chatter."
+            description = "Risk of Rain 2 Imperial trooper enemy with red moving blaster bolts, an E-11-style rifle, skeletal motion, tactical AI and optional local voice overrides."
             dependencies = @(
               "RiskofThunder-RoR2BepInExPack-1.48.0",
               "RiskofThunder-R2API_Director-3.1.2",
@@ -107,31 +157,70 @@ jobs:
           Adds hostile Imperial stormtrooper enemies to Risk of Rain 2.
 
           ## Features
-          - Custom rigged stormtrooper model and skeletal animation clips.
-          - Slower red blaster bolts and controlled burst fire.
-          - Positional infantry behavior that tries to maintain a firing range and only repositions briefly when its line of fire is blocked.
-          - Blaster audio and radio chatter.
+          - Rigged Stormtrooper model with idle, walk, jog, weapon-ready and death clips.
+          - Red travelling bolt using the RoR2 Commando FMJ direct-hit collision pipeline.
+          - E-11-style rifle attached to the right hand with a left-hand foregrip pose.
+          - CC0 Foley blaster-shot effect from Joseph SARDIN / BigSoundBank.
+          - Optional local voice-call overrides.
+
+          ## Audio rights and local voice overrides
+          The bundled blaster sound is a CC0-licensed Foley recreation labeled by its author as a Star Wars-style blaster shot; it is not the original Lucasfilm studio recording.
+          Copyrighted dialogue from films and series is not redistributed. To add audio you are legally entitled to use, create Audio/Overrides beside the DLL and add:
+          - Radio_ContactFront.wav
+          - Radio_TargetAcquired.wav
+          - Radio_MaintainFormation.wav
+          - Radio_TrooperDown.wav
+          - Optional: Radio_Static.wav and Comms_Beep.wav
+          These override files are optional; absent voice cues stay silent instead of playing synthetic placeholder noises.
 
           ## Installation
           Import this ZIP through Thunderstore Mod Manager's **Settings → Profile → Import local mod**.
 
-          ## Notes
-          This is a development build. Verify enemy behavior and audio in-game after installing.
+          ## Testing status
+          This is a development build. CI validates compilation, audio PCM format, runtime source contracts, and archive contents; only an in-game test can confirm animation, weapon alignment, damage, sound playback, and AI behavior.
           '@
           [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
 
-          $zipPath = "PyramidHead-ImperialTroopers-0.3.17.zip"
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.18.zip"
+          # Remove generic/synthetic placeholder dialogue and redundant placeholder effects from the shipped defaults.
+          foreach ($unused in @("Blaster_Burst.wav", "Armor_Footsteps.wav", "Comms_Beep.wav", "Radio_ContactFront.wav", "Radio_MaintainFormation.wav", "Radio_Static.wav", "Radio_TargetAcquired.wav", "Radio_TrooperDown.wav", "Weapon_Handling.wav")) {
+            $unusedPath = Join-Path $packageRoot ("Audio/" + $unused)
+            if (Test-Path $unusedPath) { Remove-Item -Force $unusedPath }
+          }
+          $overrideDir = Join-Path $packageRoot "Audio/Overrides"
+          New-Item -ItemType Directory -Path $overrideDir -Force | Out-Null
+          $overrideReadme = @'
+          Optional local voice overrides (not bundled in this mod)
+          Place audio files you are legally entitled to use in this folder:
+          Radio_ContactFront.wav
+          Radio_TargetAcquired.wav
+          Radio_MaintainFormation.wav
+          Radio_TrooperDown.wav
+          Optional: Radio_Static.wav and Comms_Beep.wav
+          WAV PCM, 44.1 kHz is recommended. These files are user-supplied and are not redistributed with the mod.
+          '@
+          [System.IO.File]::WriteAllText((Join-Path $overrideDir "README.txt"), $overrideReadme + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+          $soundCredits = @'
+          SOUND LICENSES
+          Blaster_Shot.wav: CC0 Foley sound by Joseph SARDIN, BigSoundBank sound #1759, "Star Wars Blaster #3".
+          Source: https://bigsoundbank.com/blaster-star-wars-3-s1759.html
+          License: CC0 / public-domain equivalent as declared on the source page. The creator describes this as a Foley recreation, not an official Lucasfilm studio master recording.
+          Dialogue from Star Wars films and series is not included. Optional files under Audio/Overrides are supplied by the end user.
+          '@
+          [System.IO.File]::WriteAllText((Join-Path $packageRoot "SOUND_LICENSES.txt"), $soundCredits + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
           Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -Force
           if (!(Test-Path $zipPath)) { throw "Thunderstore package ZIP was not created" }
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
           try {
             $entryNames = @($zip.Entries | ForEach-Object { $_.FullName })
-            $required = @("manifest.json", "README.md", "icon.png", "ImperialTrooper.dll", "Stormtrooper.imodel", "Stormtrooper.ianim", "ANIMATION_LICENSE.txt")
+            $required = @("manifest.json", "README.md", "icon.png", "ImperialTrooper.dll", "Stormtrooper.imodel", "Stormtrooper.ianim", "ANIMATION_LICENSE.txt", "SOUND_LICENSES.txt", "Audio/Overrides/README.txt")
             foreach ($name in $required) {
               if ($entryNames -notcontains $name) { throw "Thunderstore ZIP is missing required entry: $name" }
             }
-            if (!($entryNames | Where-Object { $_ -like "Audio/*.wav" })) { throw "Thunderstore ZIP contains no packaged PCM WAV audio files" }
+            if ($entryNames -notcontains "Audio/Blaster_Shot.wav") { throw "Thunderstore ZIP is missing the licensed red blaster sound" }
+            if ($entryNames | Where-Object { $_ -match "^Audio/Radio_.*\.wav$" -or $_ -eq "Audio/Comms_Beep.wav" }) { throw "Placeholder radio files should not be bundled; use Audio/Overrides instead." }
+            if ($entryNames -notcontains "Audio/Overrides/README.txt") { throw "Local voice override slot is missing" }
             Write-Host ("Validated Thunderstore package entries: " + ($entryNames -join ", "))
           }
           finally { $zip.Dispose() }
@@ -140,9 +229,9 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImperialTroopers-0.3.17-package
+          name: ImperialTroopers-0.3.18-package
           path: |
-            PyramidHead-ImperialTroopers-0.3.17.zip
+            PyramidHead-ImperialTroopers-0.3.18.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
