@@ -103,6 +103,7 @@ jobs:
           $tryBolt = $plugin.Substring($start, $end - $start)
           if ($tryBolt -match 'ImperialTrooperBoltVisual\s+boltVisual') { throw "Old root-attached floating capsule remains on the projectile body." }
           if ($tryBolt -match 'CommandoGrenadeProjectile|LunarGolemTwinShotProjectile') { throw "Forbidden grenade/Lunar-Golem projectile fallback remains." }
+          if ($tryBolt -match 'sourceGhost\s*=\s*RedTracerPrefab') { throw "Effect-only red tracer must not be used as a projectile ghost." }
           if ($tryBolt -match 'BulletAttack\s+attack') { throw "Instant hitscan fallback remains in projectile registration." }
           Write-Host "Validated: no grenade/Lunar-Golem/hitscan fallback in blaster registration."
 
