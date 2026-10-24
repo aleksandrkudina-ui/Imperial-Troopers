@@ -59,6 +59,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Rigged model conversion failed; inspect helper-bone collapse output above" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/retarget_ual_animations.py" "$project/Assets/Stormtrooper.fbx" "$($animationSourceFile.FullName)" "$project/Assets/Stormtrooper.ianim"
           if ($LASTEXITCODE -ne 0) { throw "Animation retargeting failed; inspect clip and bone mapping output above" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/validate_ianim.py" "$project/Assets/Stormtrooper.ianim"
+          if ($LASTEXITCODE -ne 0) { throw "Semantic animation validation failed; do not package static or malformed clips" }
           python "ImperialTrooper_SourceBundle_0.3.4/tools/convert_audio_to_wav.py" "$project/Audio"
           if ($LASTEXITCODE -ne 0) { throw "MP3 to WAV conversion failed; the game needs Unity-compatible PCM audio" }
           python -c "import wave,sys; p=sys.argv[1]; w=wave.open(p,'rb'); assert w.getnframes()>4000, 'blaster clip too short'; assert w.getframerate()==44100, f'unexpected sample rate {w.getframerate()}'; assert w.getsampwidth()==2, f'unexpected PCM width {w.getsampwidth()}'; assert w.getnchannels() in (1,2), f'unexpected channel count {w.getnchannels()}'; print(f'Validated CC0 blaster WAV: {w.getnframes()/w.getframerate():.3f}s, {w.getframerate()} Hz, {w.getnchannels()} channel(s), PCM16') " "$project/Audio/Blaster_Shot.wav"
@@ -119,6 +121,8 @@ jobs:
           if (!(Test-Path "$dir/Stormtrooper.imodel")) { throw "Stormtrooper.imodel is missing" }
           if (!(Test-Path "$dir/Stormtrooper.ianim")) { throw "Retargeted Stormtrooper.ianim is missing" }
           if ((Get-Item "$dir/Stormtrooper.ianim").Length -lt 10000) { throw "Retargeted Stormtrooper.ianim is unexpectedly small" }
+          python "ImperialTrooper_SourceBundle_0.3.4/tools/validate_ianim.py" "$dir/Stormtrooper.ianim"
+          if ($LASTEXITCODE -ne 0) { throw "Packaged animation data failed semantic validation" }
           if (!(Test-Path "$dir/ANIMATION_LICENSE.txt")) { throw "Animation source license file is missing" }
           if (!(Test-Path "$dir/Audio")) { throw "Audio directory is missing" }
           if (!(Test-Path "$dir/icon.png")) { throw "Thunderstore mod icon is missing" }
