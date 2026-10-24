@@ -638,7 +638,8 @@ namespace ImperialTrooperMod
                 GameObject sourceGhost = ResolveProjectileGhost(sourceController);
                 if (sourceGhost == null)
                     sourceGhost = Addressables.LoadAssetAsync<GameObject>("RoR2/Base/Commando/CommandoFMJGhost.prefab").WaitForCompletion();
-                if (sourceGhost == null) sourceGhost = RedTracerPrefab;
+                if (sourceGhost == null)
+                    throw new InvalidOperationException("No valid FMJ projectile ghost could be resolved; refusing to use the effect-only red tracer as a projectile ghost.");
 
                 Material sourceMaterial = FindProjectileMaterial(sourceGhost);
                 if (sourceMaterial == null) throw new InvalidOperationException("FMJ ghost/tracer has no material to tint.");
