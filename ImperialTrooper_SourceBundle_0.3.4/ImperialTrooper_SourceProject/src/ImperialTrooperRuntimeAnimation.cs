@@ -483,9 +483,13 @@ namespace ImperialTrooperMod
             if (visualRoot == null || weaponTransform == null || rightHandBone == null) return;
 
             Vector3 direction = aimDirection.sqrMagnitude > 0.001f ? aimDirection.normalized : -visualRoot.forward;
-            // The modeled E-11 barrel points along local -Z; aim its negative-Z axis at the target.
+            // The modeled E-11 barrel points along local -Z. Reset its grip transform every frame:
+            // animation data can reposition the hand bone, but must not preserve an old converted
+            // world-space offset on the child rifle.
+            weaponTransform.localPosition = Vector3.zero;
+            weaponTransform.localRotation = Quaternion.identity;
             Quaternion desiredWeaponRotation = Quaternion.LookRotation(-direction, visualRoot.up);
-            rightHandBone.rotation = desiredWeaponRotation * Quaternion.Inverse(weaponTransform.localRotation);
+            rightHandBone.rotation = desiredWeaponRotation;
 
             if (leftUpperArmBone == null || leftLowerArmBone == null || leftHandBone == null) return;
             Vector3 foregrip = weaponTransform.TransformPoint(new Vector3(0f, -0.030f, -0.235f));
