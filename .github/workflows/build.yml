@@ -80,8 +80,10 @@ jobs:
           $ErrorActionPreference = "Stop"
           $pluginPath = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/src/ImperialTrooperPlugin.cs"
           $animPath = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/src/ImperialTrooperRuntimeAnimation.cs"
+          $modelPath = "ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/src/ImperialTrooperRuntimeModel.cs"
           $plugin = Get-Content $pluginPath -Raw
           $anim = Get-Content $animPath -Raw
+          $model = Get-Content $modelPath -Raw
           $checks = @(
             @{ Name = "RoR2 FMJ straight projectile"; Text = $plugin; Pattern = 'FMJRamping\.prefab' },
             @{ Name = "Direct hitbox damage pipeline"; Text = $plugin; Pattern = 'ProjectileOverlapAttack overlap' },
@@ -102,8 +104,8 @@ jobs:
             @{ Name = "Jog hysteresis threshold"; Text = $anim; Pattern = 'speed >= 5\.2f' },
             @{ Name = "Jog exit hysteresis threshold"; Text = $anim; Pattern = 'speed > 3\.6f' },
             @{ Name = "Death pelvis ground target"; Text = $anim; Pattern = 'ResolveDeathGroundY\(hipsBone\.position\)' },
-            @{ Name = "Parent scale compensation"; Text = $plugin; Pattern = 'desiredWorldScale / parentScale\.x' },
-            @{ Name = "Scale diagnostic log"; Text = $plugin; Pattern = 'resultingWorldScale=' }
+            @{ Name = "Parent scale compensation"; Text = $model; Pattern = 'desiredWorldScale / parentScale\.x' },
+            @{ Name = "Scale diagnostic log"; Text = $model; Pattern = 'resultingWorldScale=' }
           )
           foreach ($check in $checks) {
             if ($check.Text -notmatch $check.Pattern) { throw "Runtime contract failed: $($check.Name)" }
