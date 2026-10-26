@@ -28,7 +28,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.20";
+        public const string PluginVersion = "0.3.21";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -306,6 +306,88 @@ namespace ImperialTrooperMod
                 ", trooper-down voice override=" + (RadioTrooperDownClip != null) + ".");
         }
 
+        private AudioClip DecodePcmWaveFile(string path)
+        {
+            // Do not use UnityWebRequestMultimedia for local WAV files here. On the user's RoR2
+            // runtime it reported success but returned empty AudioClips (0 samples / 0 Hz) for
+            // valid PCM files. Parse the small PCM format emitted by our build pipeline directly.
+            byte[] bytes = File.ReadAllBytes(path);
+            if (bytes.Length < 44 ||
+                Encoding.ASCII.GetString(bytes, 0, 4) != "RIFF" ||
+                Encoding.ASCII.GetString(bytes, 8, 4) != "WAVE")
+                throw new InvalidDataException("File is not a valid RIFF/WAVE file.");
+
+            ushort formatTag = 0;
+            ushort channels = 0;
+            ushort bitsPerSample = 0;
+            ushort blockAlign = 0;
+            int sampleRate = 0;
+            int dataOffset = -1;
+            int dataLength = 0;
+
+            int offset = 12;
+            while (offset + 8 <= bytes.Length)
+            {
+                string chunkId = Encoding.ASCII.GetString(bytes, offset, 4);
+                uint chunkSizeUnsigned = BitConverter.ToUInt32(bytes, offset + 4);
+                if (chunkSizeUnsigned > int.MaxValue)
+                    throw new InvalidDataException("WAV chunk is too large: " + chunkId);
+                int chunkSize = (int)chunkSizeUnsigned;
+                int chunkData = offset + 8;
+                if (chunkData < 0 || chunkSize < 0 || chunkData > bytes.Length - chunkSize)
+                    throw new InvalidDataException("WAV contains a truncated " + chunkId + " chunk.");
+
+                if (chunkId == "fmt ")
+                {
+                    if (chunkSize < 16)
+                        throw new InvalidDataException("WAV fmt chunk is shorter than the PCM header.");
+                    formatTag = BitConverter.ToUInt16(bytes, chunkData);
+                    channels = BitConverter.ToUInt16(bytes, chunkData + 2);
+                    sampleRate = BitConverter.ToInt32(bytes, chunkData + 4);
+                    blockAlign = BitConverter.ToUInt16(bytes, chunkData + 12);
+                    bitsPerSample = BitConverter.ToUInt16(bytes, chunkData + 14);
+                }
+                else if (chunkId == "data" && dataOffset < 0)
+                {
+                    dataOffset = chunkData;
+                    dataLength = chunkSize;
+                }
+
+                // RIFF chunks are word-aligned; skip the optional pad byte on odd-sized chunks.
+                offset = chunkData + chunkSize + (chunkSize & 1);
+            }
+
+            if (formatTag != 1)
+                throw new InvalidDataException("Only uncompressed PCM WAV is supported (format tag " + formatTag + ").");
+            if (channels < 1 || channels > 2)
+                throw new InvalidDataException("Expected mono/stereo WAV, got " + channels + " channels.");
+            if (sampleRate < 8000 || sampleRate > 192000)
+                throw new InvalidDataException("Unsupported WAV sample rate: " + sampleRate + " Hz.");
+            if (bitsPerSample != 16)
+                throw new InvalidDataException("Expected 16-bit PCM WAV, got " + bitsPerSample + "-bit samples.");
+            if (blockAlign != channels * 2)
+                throw new InvalidDataException("PCM block alignment does not match channel count.");
+            if (dataOffset < 0 || dataLength <= 0 || dataLength % blockAlign != 0)
+                throw new InvalidDataException("WAV has no usable, frame-aligned PCM data chunk.");
+
+            int frameCount = dataLength / blockAlign;
+            float[] samples = new float[frameCount * channels];
+            for (int i = 0; i < samples.Length; i++)
+            {
+                int byteIndex = dataOffset + i * 2;
+                short value = unchecked((short)(bytes[byteIndex] | (bytes[byteIndex + 1] << 8)));
+                samples[i] = value / 32768f;
+            }
+
+            AudioClip clip = AudioClip.Create(IOPath.GetFileNameWithoutExtension(path), frameCount, channels, sampleRate, false);
+            if (clip == null || !clip.SetData(samples, 0))
+            {
+                if (clip != null) UnityEngine.Object.Destroy(clip);
+                throw new InvalidDataException("Unity could not create an AudioClip from decoded PCM samples.");
+            }
+            return clip;
+        }
+
         private IEnumerator LoadAudio(string path)
         {
             if (string.IsNullOrEmpty(path)) yield break;
@@ -315,39 +397,20 @@ namespace ImperialTrooperMod
                 yield break;
             }
 
-            string uri;
-            try { uri = new Uri(IOPath.GetFullPath(path)).AbsoluteUri; }
+            AudioClip loadedClip;
+            try
+            {
+                loadedClip = DecodePcmWaveFile(path);
+            }
             catch (Exception ex)
             {
-                Logger.LogWarning("Could not create audio file URI for " + path + ": " + ex.Message);
+                Logger.LogWarning("PCM WAV decoding failed for " + IOPath.GetFileName(path) + ": " + ex.Message);
                 yield break;
             }
 
-            AudioClip loadedClip = null;
-            using (UnityWebRequest request = UnityWebRequestMultimedia.GetAudioClip(uri, AudioType.WAV))
-            {
-                request.timeout = 20;
-                yield return request.SendWebRequest();
-
-                if (request.result != UnityWebRequest.Result.Success)
-                {
-                    Logger.LogWarning("Unity WAV decoder failed for " + IOPath.GetFileName(path) + " (" + uri + "): " + request.error);
-                    yield break;
-                }
-
-                loadedClip = DownloadHandlerAudioClip.GetContent(request);
-            }
-
-            // DownloadHandlerAudioClip owns WAV parsing; don't treat a non-null but empty clip as loaded.
             if (loadedClip == null || loadedClip.samples <= 0 || loadedClip.length <= 0.01f)
             {
-                int samples = loadedClip != null ? loadedClip.samples : 0;
-                float length = loadedClip != null ? loadedClip.length : 0f;
-                int frequency = loadedClip != null ? loadedClip.frequency : 0;
-                int channels = loadedClip != null ? loadedClip.channels : 0;
-                Logger.LogWarning("Unity WAV decoder returned an empty clip for " + IOPath.GetFileName(path) +
-                    ": length=" + length.ToString("0.000") + " s, samples=" + samples +
-                    ", channels=" + channels + ", frequency=" + frequency + " Hz.");
+                Logger.LogWarning("PCM WAV decoder produced an empty AudioClip for " + IOPath.GetFileName(path) + ".");
                 if (loadedClip != null) UnityEngine.Object.Destroy(loadedClip);
                 yield break;
             }
@@ -363,9 +426,10 @@ namespace ImperialTrooperMod
             else if (file.Equals("Comms_Beep.wav", StringComparison.OrdinalIgnoreCase)) CommsBeepClip = loadedClip;
             else if (file.Equals("Blaster_Impact.wav", StringComparison.OrdinalIgnoreCase)) BlasterImpactClip = loadedClip;
 
-            Logger.LogInfo("Loaded decoded WAV: " + file + " (" + loadedClip.length.ToString("0.00") +
+            Logger.LogInfo("Loaded PCM WAV directly: " + file + " (" + loadedClip.length.ToString("0.00") +
                 " sec, " + loadedClip.samples + " frames/channel, " + loadedClip.channels +
                 " channels, " + loadedClip.frequency + " Hz).");
+            yield return null;
         }
 
         internal static void PlayClip(AudioClip clip, Vector3 position, float volume = 0.7f)
