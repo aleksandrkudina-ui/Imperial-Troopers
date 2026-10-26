@@ -99,7 +99,9 @@ jobs:
             @{ Name = "Decoded samples fed to AudioClip"; Text = $plugin; Pattern = 'clip\.SetData\(samples, 0\)' },
             @{ Name = "Jog hysteresis threshold"; Text = $anim; Pattern = 'speed >= 5\.2f' },
             @{ Name = "Jog exit hysteresis threshold"; Text = $anim; Pattern = 'speed > 3\.6f' },
-            @{ Name = "Death pelvis ground target"; Text = $anim; Pattern = 'ResolveDeathGroundY\(hipsBone\.position\)' }
+            @{ Name = "Death pelvis ground target"; Text = $anim; Pattern = 'ResolveDeathGroundY\(hipsBone\.position\)' },
+            @{ Name = "Parent scale compensation"; Text = $plugin; Pattern = 'desiredWorldScale / parentScale\.x' },
+            @{ Name = "Scale diagnostic log"; Text = $plugin; Pattern = 'resultingWorldScale=' }
           )
           foreach ($check in $checks) {
             if ($check.Text -notmatch $check.Pattern) { throw "Runtime contract failed: $($check.Name)" }
