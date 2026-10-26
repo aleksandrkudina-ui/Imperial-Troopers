@@ -566,7 +566,9 @@ namespace ImperialTrooperMod
             // The modeled E-11 barrel points along local -Z. Reset its grip transform every frame:
             // animation data can reposition the hand bone, but must not preserve an old converted
             // world-space offset on the child rifle.
-            weaponTransform.localPosition = Vector3.zero;
+            // Match the setup position used when the E-11 is first attached: its origin is the
+            // receiver, so the pistol grip needs to be offset into the palm.
+            weaponTransform.localPosition = new Vector3(0f, 0.12f, -0.025f);
             weaponTransform.localRotation = Quaternion.identity;
             Quaternion desiredWeaponRotation = Quaternion.LookRotation(-direction, visualRoot.up);
             rightHandBone.rotation = desiredWeaponRotation;
