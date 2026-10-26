@@ -141,6 +141,11 @@ namespace ImperialTrooperMod
         private ImperialTrooperAnimationSet.Clip fire;
         private ImperialTrooperAnimationSet.Clip current;
         private float currentStartTime;
+        private bool jogState;
+        private Transform hipsBone;
+        private float deathHipsStartY;
+        private float deathHipsTargetY;
+        private const float DeathFallDuration = 0.42f;
         private ImperialTrooperAnimationSet.Clip action;
         private float actionStartTime;
         private float actionEndTime;
@@ -204,6 +209,7 @@ namespace ImperialTrooperMod
             rightArmProbe = null;
             leftLegProbe = null;
             rightHandBone = FindNamedTransform(transforms, "RightHand");
+            hipsBone = FindNamedTransform(transforms, "Hips", "Pelvis");
             leftUpperArmBone = FindNamedTransform(transforms, "LeftArm", "LeftUpperArm");
             leftLowerArmBone = FindNamedTransform(transforms, "LeftForeArm", "LeftLowerArm");
             leftHandBone = FindNamedTransform(transforms, "LeftHand");
@@ -235,6 +241,9 @@ namespace ImperialTrooperMod
             currentStartTime = Time.time;
             action = null;
             deathStarted = false;
+            jogState = false;
+            deathHipsStartY = 0f;
+            deathHipsTargetY = 0f;
             observedAlive = false;
             loggedInitialDeadState = false;
             loggedDeathClip = false;
@@ -317,8 +326,9 @@ namespace ImperialTrooperMod
 
         internal void SetMovement(bool moving)
         {
+            // This is AI intent, not proof the body is moving. Velocity drives the gait so troopers
+            // do not run in place while a path/skill driver is blocked at a wall or target distance.
             movementCommand = moving;
-            if (moving) lastMovementSignalTime = Time.time;
         }
 
         internal void SetAimDirection(Vector3 direction)
@@ -408,6 +418,17 @@ namespace ImperialTrooperMod
                     action = null;
                     current = death;
                     currentStartTime = Time.time;
+                    if (hipsBone != null)
+                    {
+                        deathHipsStartY = hipsBone.position.y;
+                        deathHipsTargetY = ResolveDeathGroundY(hipsBone.position);
+                        // A bad ray hit or a raised platform must never move the corpse upward.
+                        if (deathHipsTargetY > deathHipsStartY - 0.20f)
+                            deathHipsTargetY = deathHipsStartY - 0.55f;
+                        ImperialTrooperPlugin.LogSource?.LogInfo("Death grounding prepared: instance=" + GetInstanceID() +
+                            ", hipsY=" + deathHipsStartY.ToString("0.00") +
+                            ", targetY=" + deathHipsTargetY.ToString("0.00") + ".");
+                    }
                     if (!loggedDeathClip)
                     {
                         loggedDeathClip = true;
@@ -416,7 +437,19 @@ namespace ImperialTrooperMod
                             ", bindingCount=" + targetBindings.Count + ".");
                     }
                 }
+
+                float deathProgress = Mathf.SmoothStep(0f, 1f,
+                    Mathf.Clamp01((Time.time - currentStartTime) / DeathFallDuration));
                 if (death != null) ApplyClip(death, Time.time - currentStartTime, false);
+                // The source death clip rotates the humanoid around its pelvis but has no root motion.
+                // Without lowering that pivot, corpses lie horizontally suspended at waist height.
+                // Move only the pelvis toward the sampled floor level after applying the skeletal pose.
+                if (hipsBone != null)
+                {
+                    Vector3 hipsPosition = hipsBone.position;
+                    hipsPosition.y = Mathf.Lerp(deathHipsStartY, deathHipsTargetY, deathProgress);
+                    hipsBone.position = hipsPosition;
+                }
                 LogPoseApplied("death");
                 return;
             }
@@ -425,19 +458,40 @@ namespace ImperialTrooperMod
                 ? body.characterMotor.velocity : Vector3.zero;
             planarVelocity.y = 0f;
             float speed = planarVelocity.magnitude;
-            bool movementSignal = movementCommand || speed > 0.65f;
-            if (movementSignal) lastMovementSignalTime = Time.time;
-            // Motor velocity and AI distance drivers are not perfectly in phase. Keep the gait active
-            // briefly after an input transition so the animation never re-selects idle/walk every frame.
-            bool moving = movementSignal || (Time.time - lastMovementSignalTime) < 0.28f;
+            // Hysteresis prevents RoR2's motor/AI velocity jitter around 4.5-5.0 m/s from
+            // switching walk<->jog every frame and restarting each clip at frame zero.
+            if (speed > 0.65f) lastMovementSignalTime = Time.time;
+            bool moving = speed > 0.45f ||
+                (movementCommand && speed > 0.25f) ||
+                (Time.time - lastMovementSignalTime) < 0.10f;
             bool firingAction = action != null && Time.time < actionEndTime;
             if (!firingAction) action = null;
 
             ImperialTrooperAnimationSet.Clip next;
-            if (moving && speed > 4.6f && jog != null) next = jog;
-            else if (moving && walk != null) next = walk;
-            else if (inCombat && aim != null) next = aim;
-            else next = idle ?? aim ?? walk ?? jog ?? death;
+            if (moving && jog != null)
+            {
+                if (jogState)
+                {
+                    if (speed > 3.6f) next = jog;
+                    else { jogState = false; next = walk ?? jog; }
+                }
+                else if (speed >= 5.2f)
+                {
+                    jogState = true;
+                    next = jog;
+                }
+                else
+                {
+                    next = walk ?? jog;
+                }
+            }
+            else
+            {
+                jogState = false;
+                if (moving && walk != null) next = walk;
+                else if (inCombat && aim != null) next = aim;
+                else next = idle ?? aim ?? walk ?? jog ?? death;
+            }
 
             if (next == null) return;
             if (current != next)
@@ -464,6 +518,32 @@ namespace ImperialTrooperMod
             // and is actually aligned with the target.
             ApplyWeaponPose();
 
+        }
+
+        private float ResolveDeathGroundY(Vector3 hipsPosition)
+        {
+            // Query the environment below the pelvis but ignore this trooper's own body/model colliders.
+            RaycastHit[] hits = Physics.RaycastAll(
+                hipsPosition + Vector3.up * 0.25f, Vector3.down, 8f,
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            float nearestDistance = float.PositiveInfinity;
+            float groundY = hipsPosition.y - 0.55f;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                Collider hitCollider = hits[i].collider;
+                if (hitCollider == null) continue;
+                Transform hitTransform = hitCollider.transform;
+                if (body != null && (hitTransform == body.transform || hitTransform.IsChildOf(body.transform)))
+                    continue;
+                if (visualRoot != null && (hitTransform == visualRoot || hitTransform.IsChildOf(visualRoot)))
+                    continue;
+                if (hits[i].distance < nearestDistance)
+                {
+                    nearestDistance = hits[i].distance;
+                    groundY = hits[i].point.y + 0.22f;
+                }
+            }
+            return groundY;
         }
 
         private void LogPoseApplied(string clipName)
