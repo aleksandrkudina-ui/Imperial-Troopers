@@ -1196,7 +1196,9 @@ namespace ImperialTrooperMod
                 // the rifle floating inside/away from the palm.
                 gun.transform.SetParent(rightHand, false);
                 gun.transform.localScale = Vector3.one * 1.7f;
-                gun.transform.localPosition = Vector3.zero;
+                // The primitive rifle's origin is at the receiver, not at the pistol grip. Offset the
+                // receiver so the actual grip sits at the right-hand palm instead of hanging below it.
+                gun.transform.localPosition = new Vector3(0f, 0.12f, -0.025f);
                 gun.transform.localRotation = Quaternion.identity;
 
                 CreateRuntimePart(gun.transform, "E11_Receiver", PrimitiveType.Cube,
