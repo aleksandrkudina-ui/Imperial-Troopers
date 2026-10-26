@@ -511,7 +511,8 @@ namespace ImperialTrooperMod
                 particles.Clear(true);
                 var emission = particles.emission;
                 emission.enabled = false;
-                particles.enabled = false;
+                // ParticleSystem is not a Behaviour in this RoR2 Unity reference; disabling emission
+                // and clearing particles is the supported way to suppress inherited VFX.
             }
             // The source FMJ ghost contains its own tinted glow/trail. Stopping particles alone is
             // insufficient: some inherited emitters restart when RoR2 enables a cloned ghost and
@@ -716,7 +717,8 @@ namespace ImperialTrooperMod
                     particles.Clear(true);
                     var emission = particles.emission;
                     emission.enabled = false;
-                    particles.enabled = false;
+                    // ParticleSystem is not a Behaviour in this RoR2 Unity reference; disabling emission
+                // and clearing particles is the supported way to suppress inherited VFX.
                 }
                 foreach (TrailRenderer inheritedTrail in BlasterBoltPrefab.GetComponentsInChildren<TrailRenderer>(true))
                 {
