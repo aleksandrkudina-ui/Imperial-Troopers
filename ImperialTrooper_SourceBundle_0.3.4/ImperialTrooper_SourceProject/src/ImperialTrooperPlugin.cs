@@ -28,7 +28,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.19";
+        public const string PluginVersion = "0.3.20";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -509,9 +509,23 @@ namespace ImperialTrooperMod
                 if (particles == null) continue;
                 particles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 particles.Clear(true);
+                var emission = particles.emission;
+                emission.enabled = false;
+                particles.enabled = false;
             }
+            // The source FMJ ghost contains its own tinted glow/trail. Stopping particles alone is
+            // insufficient: some inherited emitters restart when RoR2 enables a cloned ghost and
+            // can leave a blue light trail while our red core is hidden by the material shader.
+            foreach (Light inheritedLight in ghost.GetComponentsInChildren<Light>(true))
+                if (inheritedLight != null) inheritedLight.enabled = false;
             foreach (TrailRenderer oldTrail in ghost.GetComponentsInChildren<TrailRenderer>(true))
-                if (oldTrail != null) oldTrail.enabled = false;
+            {
+                if (oldTrail == null) continue;
+                oldTrail.Clear();
+                oldTrail.enabled = false;
+            }
+            foreach (LineRenderer oldLine in ghost.GetComponentsInChildren<LineRenderer>(true))
+                if (oldLine != null) oldLine.enabled = false;
             foreach (Animator oldAnimator in ghost.GetComponentsInChildren<Animator>(true))
                 if (oldAnimator != null) oldAnimator.enabled = false;
             foreach (MonoBehaviour behaviour in ghost.GetComponentsInChildren<MonoBehaviour>(true))
@@ -641,11 +655,16 @@ namespace ImperialTrooperMod
                 if (sourceGhost == null)
                     throw new InvalidOperationException("No valid FMJ projectile ghost could be resolved; refusing to use the effect-only red tracer as a projectile ghost.");
 
-                Material sourceMaterial = FindProjectileMaterial(sourceGhost);
-                if (sourceMaterial == null) throw new InvalidOperationException("FMJ ghost/tracer has no material to tint.");
+                // Do not clone the vanilla ghost's material: its original texture/shader contains a
+                // blue/cyan glow that survives simple color tinting on some RoR2 1.5 shader variants.
+                // Build a clean red material and use it for the bolt core AND trail.
+                Shader boltShader = Shader.Find("Hopoo Games/Deferred/Standard");
+                if (boltShader == null) boltShader = Shader.Find("Standard");
+                if (boltShader == null) boltShader = Shader.Find("Sprites/Default");
+                if (boltShader == null) throw new InvalidOperationException("No supported shader is available for the red blaster bolt.");
                 if (BlasterBoltMaterial != null) Destroy(BlasterBoltMaterial);
-                BlasterBoltMaterial = new Material(sourceMaterial) { name = "ImperialTrooperRedBoltMaterial" };
-                SetTint(BlasterBoltMaterial, new Color(1f, 0.018f, 0.012f, 1f));
+                BlasterBoltMaterial = new Material(boltShader) { name = "ImperialTrooperRedBoltMaterial" };
+                SetTint(BlasterBoltMaterial, new Color(1f, 0.012f, 0.008f, 1f));
                 if (BlasterBoltMaterial.HasProperty("_EmissionColor"))
                 {
                     BlasterBoltMaterial.EnableKeyword("_EMISSION");
@@ -688,6 +707,27 @@ namespace ImperialTrooperMod
                 }
                 foreach (Renderer renderer in BlasterBoltPrefab.GetComponentsInChildren<Renderer>(true))
                     if (renderer != null) renderer.enabled = false;
+                // Strip inherited FMJ projectile visual emitters as well as renderers. The source
+                // prefab is only retained for collision/overlap damage and its straight flight logic.
+                foreach (ParticleSystem particles in BlasterBoltPrefab.GetComponentsInChildren<ParticleSystem>(true))
+                {
+                    if (particles == null) continue;
+                    particles.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                    particles.Clear(true);
+                    var emission = particles.emission;
+                    emission.enabled = false;
+                    particles.enabled = false;
+                }
+                foreach (TrailRenderer inheritedTrail in BlasterBoltPrefab.GetComponentsInChildren<TrailRenderer>(true))
+                {
+                    if (inheritedTrail == null) continue;
+                    inheritedTrail.Clear();
+                    inheritedTrail.enabled = false;
+                }
+                foreach (LineRenderer inheritedLine in BlasterBoltPrefab.GetComponentsInChildren<LineRenderer>(true))
+                    if (inheritedLine != null) inheritedLine.enabled = false;
+                foreach (Light inheritedLight in BlasterBoltPrefab.GetComponentsInChildren<Light>(true))
+                    if (inheritedLight != null) inheritedLight.enabled = false;
 
                 // Use RoR2's projectile-ghost pipeline. The visual must follow ProjectileGhostController,
                 // not be rendered as a capsule on the projectile body (that was the source of the floaty look).
