@@ -397,18 +397,25 @@ namespace ImperialTrooperMod
                 yield break;
             }
 
-            AudioClip loadedClip;
+            AudioClip loadedClip = null;
+            string decodeError = null;
             try
             {
                 loadedClip = DecodePcmWaveFile(path);
             }
             catch (Exception ex)
             {
-                Logger.LogWarning("PCM WAV decoding failed for " + IOPath.GetFileName(path) + ": " + ex.Message);
+                decodeError = ex.Message;
+            }
+
+            if (loadedClip == null)
+            {
+                Logger.LogWarning("PCM WAV decoding failed for " + IOPath.GetFileName(path) + ": " +
+                    (decodeError ?? "decoder returned null"));
                 yield break;
             }
 
-            if (loadedClip == null || loadedClip.samples <= 0 || loadedClip.length <= 0.01f)
+            if (loadedClip.samples <= 0 || loadedClip.length <= 0.01f)
             {
                 Logger.LogWarning("PCM WAV decoder produced an empty AudioClip for " + IOPath.GetFileName(path) + ".");
                 if (loadedClip != null) UnityEngine.Object.Destroy(loadedClip);
@@ -621,7 +628,7 @@ namespace ImperialTrooperMod
             core.transform.SetParent(ghost.transform, false);
             core.transform.localPosition = Vector3.zero;
             core.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-            core.transform.localScale = new Vector3(0.045f, 0.17f, 0.045f);
+            core.transform.localScale = new Vector3(0.060f, 0.20f, 0.060f);
 
             Material boltMaterial = new Material(template) { name = "ImperialTrooperRedBoltMaterial" };
             SetTint(boltMaterial, new Color(1f, 0.018f, 0.012f, 1f));
@@ -643,9 +650,10 @@ namespace ImperialTrooperMod
             trail.enabled = true;
             trail.Clear();
             trail.material = boltMaterial;
-            trail.time = 0.13f;
-            trail.startWidth = 0.045f;
-            trail.endWidth = 0.002f;
+            // A short, bright bolt trail reads as a travelling plasma shot, not a continuous laser beam.
+            trail.time = 0.075f;
+            trail.startWidth = 0.060f;
+            trail.endWidth = 0.006f;
             trail.minVertexDistance = 0.025f;
             trail.numCornerVertices = 2;
             trail.numCapVertices = 2;
@@ -723,9 +731,11 @@ namespace ImperialTrooperMod
                 // Do not clone the vanilla ghost's material: its original texture/shader contains a
                 // blue/cyan glow that survives simple color tinting on some RoR2 1.5 shader variants.
                 // Build a clean red material and use it for the bolt core AND trail.
-                Shader boltShader = Shader.Find("Hopoo Games/Deferred/Standard");
-                if (boltShader == null) boltShader = Shader.Find("Standard");
+                // Prefer unlit built-in shaders so the red core remains visible against dark stages.
+                Shader boltShader = Shader.Find("Particles/Standard Unlit");
                 if (boltShader == null) boltShader = Shader.Find("Sprites/Default");
+                if (boltShader == null) boltShader = Shader.Find("Hopoo Games/Deferred/Standard");
+                if (boltShader == null) boltShader = Shader.Find("Standard");
                 if (boltShader == null) throw new InvalidOperationException("No supported shader is available for the red blaster bolt.");
                 if (BlasterBoltMaterial != null) Destroy(BlasterBoltMaterial);
                 BlasterBoltMaterial = new Material(boltShader) { name = "ImperialTrooperRedBoltMaterial" };
