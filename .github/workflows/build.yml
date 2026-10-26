@@ -88,6 +88,8 @@ jobs:
             @{ Name = "Native projectile ghost"; Text = $plugin; Pattern = 'controller\.ghostPrefab = customGhost' },
             @{ Name = "Live muzzle resolution"; Text = $plugin; Pattern = 'ResolveLiveMuzzle\(\)' },
             @{ Name = "Two-handed E-11"; Text = $plugin; Pattern = 'E11_ScopeTube' },
+            @{ Name = "Right-hand grip offset"; Text = $plugin; Pattern = 'new Vector3\(0f, 0\.12f, -0\.025f\)' },
+            @{ Name = "Runtime grip offset retained"; Text = $anim; Pattern = 'new Vector3\(0f, 0\.12f, -0\.025f\)' },
             @{ Name = "Aim direction passed into animation"; Text = $plugin; Pattern = 'SetAimDirection\(aim\.normalized\)' },
             @{ Name = "Late-frame skeletal application"; Text = $anim; Pattern = 'Apply after RoR2 has finished updating' },
             @{ Name = "Two-bone rifle grip"; Text = $anim; Pattern = 'ApplyTwoBoneGripIk' },
