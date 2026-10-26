@@ -28,7 +28,7 @@ namespace ImperialTrooperMod
     {
         public const string PluginGuid = "com.pyramidhead.imperialtrooper";
         public const string PluginName = "Imperial Troopers";
-        public const string PluginVersion = "0.3.18";
+        public const string PluginVersion = "0.3.19";
 
         internal static ImperialTrooperPlugin Instance;
         internal static GameObject RedTracerPrefab;
@@ -1074,10 +1074,14 @@ namespace ImperialTrooperMod
                 Material gunMetal = BuildMaterial("Imperial_RuntimeBlasterMetal", new Color(0.12f, 0.14f, 0.15f), 0.62f, 0.43f, ceramic);
                 Material gunRubber = BuildMaterial("Imperial_RuntimeBlasterRubber", new Color(0.035f, 0.040f, 0.042f), 0.05f, 0.22f, ceramic);
                 GameObject gun = new GameObject("ImperialTrooperE11Blaster");
+                // Keep the prop directly attached to the actual right-hand bone with a stable local
+                // grip origin. Previously its world-space placement was converted to a hand-local
+                // offset before animation started; the retargeted clips then moved the hand and left
+                // the rifle floating inside/away from the palm.
                 gun.transform.SetParent(rightHand, false);
                 gun.transform.localScale = Vector3.one * 1.7f;
-                gun.transform.position = rightHand.position + importedRoot.transform.up * 0.018f + importedRoot.transform.forward * 0.025f;
-                gun.transform.rotation = Quaternion.LookRotation(importedRoot.transform.forward, importedRoot.transform.up);
+                gun.transform.localPosition = Vector3.zero;
+                gun.transform.localRotation = Quaternion.identity;
 
                 CreateRuntimePart(gun.transform, "E11_Receiver", PrimitiveType.Cube,
                     new Vector3(0f, 0f, -0.105f), new Vector3(0.115f, 0.085f, 0.265f), gunDark, Quaternion.identity);
