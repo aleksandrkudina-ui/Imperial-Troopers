@@ -93,7 +93,7 @@ jobs:
             @{ Name = "Two-bone rifle grip"; Text = $anim; Pattern = 'ApplyTwoBoneGripIk' },
             @{ Name = "Death clip"; Text = $anim; Pattern = 'entered death clip' },
             @{ Name = "Clean red bolt shader"; Text = $plugin; Pattern = 'Shader\.Find\("Hopoo Games/Deferred/Standard"\)' },
-            @{ Name = "Disable inherited projectile particles"; Text = $plugin; Pattern = 'particles\.enabled = false' },
+            @{ Name = "Disable inherited projectile particles"; Text = $plugin; Pattern = 'emission\.enabled = false' },
             @{ Name = "Disable inherited projectile lights"; Text = $plugin; Pattern = 'inheritedLight\.enabled = false' }
           )
           foreach ($check in $checks) {
