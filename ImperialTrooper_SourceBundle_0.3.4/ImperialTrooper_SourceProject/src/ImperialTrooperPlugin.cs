@@ -2044,7 +2044,8 @@ namespace ImperialTrooperMod
     public sealed class ImperialTrooperBrain : MonoBehaviour
     {
         public float DetectionRange = 32f;
-        private bool fallbackWarningLogged;\n        public float FireInterval = 1.65f;
+        private bool fallbackWarningLogged;
+        public float FireInterval = 1.65f;
         public float PreferredRange = 13f;
         public float SpreadDegrees = 2.7f;
         public int BurstShotCount = 3;
