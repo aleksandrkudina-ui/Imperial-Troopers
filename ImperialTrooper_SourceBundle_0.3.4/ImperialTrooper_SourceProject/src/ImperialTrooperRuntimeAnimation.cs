@@ -160,6 +160,8 @@ namespace ImperialTrooperMod
         private Transform weaponTransform;
         private string lastLoggedAnimationState;
         private bool deathStarted;
+        private bool corpseDetached;
+        private float corpseDestroyAt;
         private bool loggedFirstPose;
         private Transform leftArmProbe;
         private Transform rightArmProbe;
@@ -388,6 +390,24 @@ namespace ImperialTrooperMod
                     ", parentBody=" + (body != null ? body.name : "<none>") + ", aliveAtFirstTick=" + aliveAtFirstTick + ".");
             }
 
+            // RoR2 may destroy the living body object as soon as its death state is processed.
+            // Keep the imported mesh/rig independent so the fall animation can finish instead of
+            // vanishing with Commando's body/model hierarchy.
+            if (corpseDetached)
+            {
+                float elapsed = Time.time - currentStartTime;
+                if (death != null) ApplyClip(death, elapsed, false);
+                float progress = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / DeathFallDuration));
+                if (hipsBone != null)
+                {
+                    Vector3 p = hipsBone.position;
+                    p.y = Mathf.Lerp(deathHipsStartY, deathHipsTargetY, progress);
+                    hipsBone.position = p;
+                }
+                if (Time.time >= corpseDestroyAt) Destroy(gameObject);
+                return;
+            }
+
             bool healthKnown = body != null && body.healthComponent != null;
             bool aliveNow = healthKnown && body.healthComponent.alive;
             if (!observedAlive)
@@ -418,6 +438,13 @@ namespace ImperialTrooperMod
                     action = null;
                     current = death;
                     currentStartTime = Time.time;
+                    corpseDetached = true;
+                    corpseDestroyAt = Time.time + 5f;
+                    if (visualRoot != null)
+                    {
+                        visualRoot.SetParent(null, true);
+                        ImperialTrooperPlugin.LogSource?.LogInfo("Detached Stormtrooper corpse visual to finish death animation independently of body cleanup.");
+                    }
                     if (hipsBone != null)
                     {
                         deathHipsStartY = hipsBone.position.y;
