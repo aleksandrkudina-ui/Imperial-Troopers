@@ -34,7 +34,7 @@ jobs:
           New-Item -ItemType Directory -Path $audioDirectory -Force | Out-Null
           $licensedSource = Join-Path $audioDirectory "Blaster_Shot.mp3"
           $licensedUrl = "https://bigsoundbank.com/UPLOAD/mp3/1759.mp3"
-          Invoke-WebRequest -Uri $licensedUrl -OutFile $licensedSource -Headers @{ "User-Agent" = "ImperialTroopers-CC0-Audio/0.3.21" }
+          Invoke-WebRequest -Uri $licensedUrl -OutFile $licensedSource -Headers @{ "User-Agent" = "ImperialTroopers-CC0-Audio/0.3.22" }
           if (!(Test-Path $licensedSource) -or (Get-Item $licensedSource).Length -lt 3000) {
             throw "Licensed CC0 blaster Foley download failed or returned an unexpectedly small file."
           }
@@ -49,7 +49,7 @@ jobs:
           New-Item -ItemType Directory -Path $assetDirectory -Force | Out-Null
           $animationSource = Join-Path $assetDirectory "UAL1_Standard.glb"
           $animationSourceUrl = "https://raw.githubusercontent.com/Barbatos6669/elderforge/bb2ce469f0ab2ccfc487faef55550ba07fae2483/assets/animations/universal_animation_library_1/UAL1_Standard.glb"
-          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.21" }
+          Invoke-WebRequest -Uri $animationSourceUrl -OutFile $animationSource -Headers @{ "User-Agent" = "ImperialTroopers-Build/0.3.22" }
           if (!(Test-Path $animationSource) -or (Get-Item $animationSource).Length -lt 1000000) { throw "Pinned CC0 UAL1 Standard GLB download is missing or unexpectedly small" }
           Write-Host ("Using pinned CC0 Quaternius UAL1 source from " + $animationSourceUrl + " (" + (Get-Item $animationSource).Length + " bytes)")
           $animationSourceFile = Get-Item $animationSource
@@ -96,7 +96,7 @@ jobs:
             @{ Name = "Late-frame skeletal application"; Text = $anim; Pattern = 'Apply after RoR2 has finished updating' },
             @{ Name = "Two-bone rifle grip"; Text = $anim; Pattern = 'ApplyTwoBoneGripIk' },
             @{ Name = "Death clip"; Text = $anim; Pattern = 'entered death clip' },
-            @{ Name = "Clean red bolt shader"; Text = $plugin; Pattern = 'Shader\.Find\("Hopoo Games/Deferred/Standard"\)' },
+            @{ Name = "Use loaded vanilla projectile material without missing built-in shader dependency"; Text = $plugin; Pattern = 'FindProjectileMaterial\(sourceGhost\)' },
             @{ Name = "Disable inherited projectile particles"; Text = $plugin; Pattern = 'emission\.enabled = false' },
             @{ Name = "Disable inherited projectile lights"; Text = $plugin; Pattern = 'inheritedLight\.enabled = false' },
             @{ Name = "Direct PCM WAV decoder"; Text = $plugin; Pattern = 'DecodePcmWaveFile\(path\)' },
@@ -158,7 +158,7 @@ jobs:
 
           $manifest = @{
             name = "ImperialTroopers"
-            version_number = "0.3.21"
+            version_number = "0.3.22"
             website_url = "https://github.com/aleksandrkudina-ui/Imperial-Troopers"
             description = "Risk of Rain 2 Imperial trooper enemy with red moving blaster bolts, an E-11-style rifle, skeletal motion, tactical AI and optional local voice overrides."
             dependencies = @(
@@ -200,7 +200,7 @@ jobs:
           '@
           [System.IO.File]::WriteAllText((Join-Path $packageRoot "README.md"), $readme + "`n", [System.Text.UTF8Encoding]::new($false))
 
-          $zipPath = "PyramidHead-ImperialTroopers-0.3.21.zip"
+          $zipPath = "PyramidHead-ImperialTroopers-0.3.22.zip"
           # Remove generic/synthetic placeholder dialogue and redundant placeholder effects from the shipped defaults.
           foreach ($unused in @("Blaster_Burst.wav", "Armor_Footsteps.wav", "Comms_Beep.wav", "Radio_ContactFront.wav", "Radio_MaintainFormation.wav", "Radio_Static.wav", "Radio_TargetAcquired.wav", "Radio_TrooperDown.wav", "Weapon_Handling.wav")) {
             $unusedPath = Join-Path $packageRoot ("Audio/" + $unused)
@@ -250,7 +250,7 @@ jobs:
         with:
           name: ImperialTroopers-0.3.21-package
           path: |
-            PyramidHead-ImperialTroopers-0.3.21.zip
+            PyramidHead-ImperialTroopers-0.3.22.zip
             ImperialTrooper_SourceBundle_0.3.4/ImperialTrooper_SourceProject/release/plugins/ImperialTrooper/ImperialTrooper.dll
           if-no-files-found: error
           retention-days: 14
