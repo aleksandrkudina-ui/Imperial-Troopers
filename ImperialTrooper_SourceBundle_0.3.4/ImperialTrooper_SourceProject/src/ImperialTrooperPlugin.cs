@@ -732,13 +732,18 @@ namespace ImperialTrooperMod
                 // blue/cyan glow that survives simple color tinting on some RoR2 1.5 shader variants.
                 // Build a clean red material and use it for the bolt core AND trail.
                 // Prefer unlit built-in shaders so the red core remains visible against dark stages.
-                Shader boltShader = Shader.Find("Particles/Standard Unlit");
-                if (boltShader == null) boltShader = Shader.Find("Sprites/Default");
-                if (boltShader == null) boltShader = Shader.Find("Hopoo Games/Deferred/Standard");
-                if (boltShader == null) boltShader = Shader.Find("Standard");
-                if (boltShader == null) throw new InvalidOperationException("No supported shader is available for the red blaster bolt.");
+                // RoR2's bundled Unity build does not always expose Unity's built-in
+                // "Particles/Standard Unlit" shader through Shader.Find. In that case Unity logs
+                // "No GUID record is available" and registration aborts, leaving the AI unable to fire.
+                // Reuse the material/shader already attached to the loaded vanilla FMJ ghost instead
+                // of depending on a shader name that may not exist in this game's player build.
+                Material sourceMaterial = FindProjectileMaterial(sourceGhost);
+                if (sourceMaterial == null)
+                    sourceMaterial = FindProjectileMaterial(source);
+                if (sourceMaterial == null)
+                    throw new InvalidOperationException("The vanilla FMJ projectile has no usable renderer material.");
                 if (BlasterBoltMaterial != null) Destroy(BlasterBoltMaterial);
-                BlasterBoltMaterial = new Material(boltShader) { name = "ImperialTrooperRedBoltMaterial" };
+                BlasterBoltMaterial = new Material(sourceMaterial) { name = "ImperialTrooperRedBoltMaterial" };
                 SetTint(BlasterBoltMaterial, new Color(1f, 0.012f, 0.008f, 1f));
                 if (BlasterBoltMaterial.HasProperty("_EmissionColor"))
                 {
@@ -819,7 +824,7 @@ namespace ImperialTrooperMod
             catch (Exception ex)
             {
                 BlasterBoltPrefab = null;
-                Logger.LogError("FMJ-based E-11 projectile registration failed; hitscan fallback is disabled: " + ex);
+                Logger.LogError("FMJ-based E-11 projectile registration failed; the AI will use a direct-hit fallback until the projectile can be registered: " + ex);
             }
         }
 
@@ -2039,7 +2044,7 @@ namespace ImperialTrooperMod
     public sealed class ImperialTrooperBrain : MonoBehaviour
     {
         public float DetectionRange = 32f;
-        public float FireInterval = 1.65f;
+        private bool fallbackWarningLogged;\n        public float FireInterval = 1.65f;
         public float PreferredRange = 13f;
         public float SpreadDegrees = 2.7f;
         public int BurstShotCount = 3;
@@ -2288,7 +2293,6 @@ namespace ImperialTrooperMod
         private void FireBlaster(Vector3 origin, Vector3 direction, bool playBurstSound)
         {
             if (body == null || !body || body.healthComponent == null || !body.healthComponent.alive) return;
-            if (ImperialTrooperPlugin.BlasterBoltPrefab == null) return;
             if (playBurstSound) GetAnimationPlayer()?.PlayShot();
 
             Quaternion aimRotation = Quaternion.LookRotation(direction);
@@ -2297,23 +2301,58 @@ namespace ImperialTrooperMod
                 UnityEngine.Random.Range(-SpreadDegrees, SpreadDegrees), 0f) * Vector3.forward;
             float shotDamage = body.damage * 0.75f;
             bool critical = Util.CheckRoll(body.crit * 0.25f, body.master);
-            FireProjectileInfo info = new FireProjectileInfo
+            if (ImperialTrooperPlugin.BlasterBoltPrefab != null)
             {
-                projectilePrefab = ImperialTrooperPlugin.BlasterBoltPrefab,
-                position = origin,
-                rotation = Quaternion.LookRotation(shotDirection),
-                owner = gameObject,
-                damage = shotDamage,
-                force = 10f,
-                crit = critical,
-                damageColorIndex = DamageColorIndex.Default,
-                useSpeedOverride = true,
-                speedOverride = ImperialTrooperPlugin.BlasterBoltSpeed
-            };
-            ProjectileManager.instance.FireProjectile(info);
+                FireProjectileInfo info = new FireProjectileInfo
+                {
+                    projectilePrefab = ImperialTrooperPlugin.BlasterBoltPrefab,
+                    position = origin,
+                    rotation = Quaternion.LookRotation(shotDirection),
+                    owner = gameObject,
+                    damage = shotDamage,
+                    force = 10f,
+                    crit = critical,
+                    damageColorIndex = DamageColorIndex.Default,
+                    useSpeedOverride = true,
+                    speedOverride = ImperialTrooperPlugin.BlasterBoltSpeed
+                };
+                ProjectileManager.instance.FireProjectile(info);
+            }
+            else
+            {
+                // Safety fallback: a failed custom visual must never disable the enemy's attack AI.
+                // This uses RoR2's native bullet damage/collision path until projectile registration works.
+                var attack = new BulletAttack
+                {
+                    owner = gameObject,
+                    weapon = gameObject,
+                    origin = origin,
+                    aimVector = shotDirection,
+                    minSpread = 0f,
+                    maxSpread = 0f,
+                    bulletCount = 1,
+                    damage = shotDamage,
+                    force = 10f,
+                    tracerEffectPrefab = null,
+                    muzzleName = "Muzzle",
+                    hitEffectPrefab = null,
+                    isCrit = critical,
+                    radius = 0.08f,
+                    maxDistance = DetectionRange,
+                    smartCollision = true,
+                    procCoefficient = 0.35f,
+                    stopperMask = LayerIndex.world.mask,
+                    teamIndex = TeamIndex.Monster,
+                    damageType = DamageType.Generic
+                };
+                attack.Fire();
+                if (!fallbackWarningLogged)
+                {
+                    fallbackWarningLogged = true;
+                    ImperialTrooperPlugin.LogSource?.LogWarning("Red bolt prefab unavailable; using native direct-hit fallback so Stormtroopers continue firing.");
+                }
+            }
 
-            // The burst is already three separately simulated projectiles. Play the actual CC0-style
-            // blaster shot once per bolt; do not substitute the old mechanical "burst" placeholder.
             if (ImperialTrooperPlugin.BlasterShotClip != null)
                 ImperialTrooperPlugin.PlayClip(ImperialTrooperPlugin.BlasterShotClip, origin, 0.92f);
         }
