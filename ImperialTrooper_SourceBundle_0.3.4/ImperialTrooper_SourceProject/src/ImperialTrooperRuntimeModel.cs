@@ -133,8 +133,20 @@ namespace ImperialTrooperMod
             root.transform.SetParent(parent, false);
             root.transform.localPosition = Vector3.zero;
             root.transform.localRotation = Quaternion.identity;
-            // The source mesh is about 3.70 Unity units tall; half scale gives roughly 1.85 m.
-            root.transform.localScale = Vector3.one * 0.5f;
+            // Target a WORLD scale of 0.5 regardless of the inherited Commando ModelTransform scale.
+            // Setting localScale=0.5 directly compounded the vanilla parent's ~0.4 scale, shrinking the
+            // whole trooper (and E-11) to about 0.2 world scale. The 3.70-unit source mesh should render
+            // at ~1.85 m tall after all parent scales are accounted for.
+            Vector3 parentScale = parent != null ? parent.lossyScale : Vector3.one;
+            const float desiredWorldScale = 0.5f;
+            root.transform.localScale = new Vector3(
+                Mathf.Abs(parentScale.x) > 0.0001f ? desiredWorldScale / parentScale.x : desiredWorldScale,
+                Mathf.Abs(parentScale.y) > 0.0001f ? desiredWorldScale / parentScale.y : desiredWorldScale,
+                Mathf.Abs(parentScale.z) > 0.0001f ? desiredWorldScale / parentScale.z : desiredWorldScale);
+            ImperialTrooperPlugin.LogSource?.LogInfo("Stormtrooper scale compensation: parentLossyScale=" +
+                parentScale.ToString("F3") + ", importedRootLocalScale=" +
+                root.transform.localScale.ToString("F3") + ", resultingWorldScale=" +
+                root.transform.lossyScale.ToString("F3") + ".");
 
             Transform[] transforms = new Transform[nodes.Length];
             try

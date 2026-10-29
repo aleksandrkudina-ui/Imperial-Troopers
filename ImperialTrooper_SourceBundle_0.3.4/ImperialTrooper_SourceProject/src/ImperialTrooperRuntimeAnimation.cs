@@ -117,6 +117,7 @@ namespace ImperialTrooperMod
         }
     }
 
+    [DefaultExecutionOrder(20000)]
     public sealed class ImperialTrooperAnimationPlayer : MonoBehaviour
     {
         private CharacterBody body;
@@ -140,12 +141,27 @@ namespace ImperialTrooperMod
         private ImperialTrooperAnimationSet.Clip fire;
         private ImperialTrooperAnimationSet.Clip current;
         private float currentStartTime;
+        private bool jogState;
+        private Transform hipsBone;
+        private float deathHipsStartY;
+        private float deathHipsTargetY;
+        private const float DeathFallDuration = 0.42f;
         private ImperialTrooperAnimationSet.Clip action;
         private float actionStartTime;
         private float actionEndTime;
         private bool inCombat;
         private bool movementCommand;
+        private float lastMovementSignalTime = -100f;
+        private Vector3 aimDirection;
+        private Transform rightHandBone;
+        private Transform leftUpperArmBone;
+        private Transform leftLowerArmBone;
+        private Transform leftHandBone;
+        private Transform weaponTransform;
+        private string lastLoggedAnimationState;
         private bool deathStarted;
+        private bool corpseDetached;
+        private float corpseDestroyAt;
         private bool loggedFirstPose;
         private Transform leftArmProbe;
         private Transform rightArmProbe;
@@ -194,6 +210,13 @@ namespace ImperialTrooperMod
             leftArmProbe = null;
             rightArmProbe = null;
             leftLegProbe = null;
+            rightHandBone = FindNamedTransform(transforms, "RightHand");
+            hipsBone = FindNamedTransform(transforms, "Hips", "Pelvis");
+            leftUpperArmBone = FindNamedTransform(transforms, "LeftArm", "LeftUpperArm");
+            leftLowerArmBone = FindNamedTransform(transforms, "LeftForeArm", "LeftLowerArm");
+            leftHandBone = FindNamedTransform(transforms, "LeftHand");
+            weaponTransform = transforms.FirstOrDefault(t => t != null && t.name == "ImperialTrooperE11Blaster");
+            aimDirection = root.forward * -1f;
             int bound = 0;
             foreach (ImperialTrooperAnimationSet.Clip clip in new[] { idle, walk, jog, death, aim, fire })
             {
@@ -220,6 +243,9 @@ namespace ImperialTrooperMod
             currentStartTime = Time.time;
             action = null;
             deathStarted = false;
+            jogState = false;
+            deathHipsStartY = 0f;
+            deathHipsTargetY = 0f;
             observedAlive = false;
             loggedInitialDeadState = false;
             loggedDeathClip = false;
@@ -228,6 +254,7 @@ namespace ImperialTrooperMod
             if (current != null)
             {
                 ApplyClip(current, 0f, current.Loop);
+                ApplyWeaponPose();
                 ImperialTrooperPlugin.LogSource?.LogInfo("Initial authored Stormtrooper pose applied to instance " +
                     GetInstanceID() + ": clip=" + current.Name +
                     ", rootActive=" + gameObject.activeInHierarchy +
@@ -243,6 +270,28 @@ namespace ImperialTrooperMod
                 ", idle=" + (idle != null) + ", walk=" + (walk != null) + ", jog=" + (jog != null) +
                 ", aim=" + (aim != null) + ", fire=" + (fire != null) + ", death=" + (death != null) +
                 ", instanceRoot=" + root.name + ", rootActive=" + root.gameObject.activeInHierarchy + ".");
+        }
+
+        private static string NormalizeBoneName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return string.Empty;
+            string withoutPrefix = name.ToLowerInvariant().Replace("mixamorig", string.Empty);
+            return new string(withoutPrefix.Where(char.IsLetterOrDigit).ToArray());
+        }
+
+        private static Transform FindNamedTransform(Transform[] transforms, params string[] aliases)
+        {
+            if (transforms == null || aliases == null) return null;
+            string[] normalizedAliases = aliases.Select(NormalizeBoneName).ToArray();
+            for (int i = 0; i < transforms.Length; i++)
+            {
+                Transform candidate = transforms[i];
+                if (candidate == null) continue;
+                string name = NormalizeBoneName(candidate.name);
+                if (normalizedAliases.Any(alias => name == alias || name.EndsWith(alias, StringComparison.Ordinal)))
+                    return candidate;
+            }
+            return null;
         }
 
         private bool BindingsBelongToRoot(Transform root)
@@ -279,7 +328,15 @@ namespace ImperialTrooperMod
 
         internal void SetMovement(bool moving)
         {
+            // This is AI intent, not proof the body is moving. Velocity drives the gait so troopers
+            // do not run in place while a path/skill driver is blocked at a wall or target distance.
             movementCommand = moving;
+        }
+
+        internal void SetAimDirection(Vector3 direction)
+        {
+            if (direction.sqrMagnitude > 0.001f)
+                aimDirection = direction.normalized;
         }
 
         internal void PlayShot()
@@ -301,27 +358,24 @@ namespace ImperialTrooperMod
             EnsureInstanceBinding();
         }
 
-        internal void PumpFromPlugin()
+        internal void PrepareFromPlugin()
         {
             if (!enabled) enabled = true;
-            if (lastPumpedFrame == Time.frameCount) return;
-
             EnsureInstanceBinding();
-            if (!configured || visualRoot == null || set == null ||
-                targetBindings == null || targetBindings.Count == 0)
-                return;
-
-            // Prevent this controller from applying the same frame twice when LateUpdate also runs.
-            lastPumpedFrame = Time.frameCount;
-            TickAnimation();
         }
 
         private void LateUpdate()
         {
-            // Main plugin Update drives every trooper on server and clients. LateUpdate remains
-            // a fallback for unusual spawn order, but never double-applies a pose in the same frame.
+            // Apply after RoR2 has finished updating the live character/model for this frame.
+            // The central plugin Update only prepares bindings; it must never write skeletal poses.
+            PrepareFromPlugin();
             if (lastPumpedFrame == Time.frameCount) return;
-            PumpFromPlugin();
+            if (!configured || visualRoot == null || set == null ||
+                targetBindings == null || targetBindings.Count == 0)
+                return;
+
+            lastPumpedFrame = Time.frameCount;
+            TickAnimation();
         }
 
         private void TickAnimation()
@@ -334,6 +388,24 @@ namespace ImperialTrooperMod
                 ImperialTrooperPlugin.LogSource?.LogInfo("Stormtrooper animation tick active: instance=" + GetInstanceID() +
                     ", rootActive=" + gameObject.activeInHierarchy + ", boundTracks=" + targetBindings.Count +
                     ", parentBody=" + (body != null ? body.name : "<none>") + ", aliveAtFirstTick=" + aliveAtFirstTick + ".");
+            }
+
+            // RoR2 may destroy the living body object as soon as its death state is processed.
+            // Keep the imported mesh/rig independent so the fall animation can finish instead of
+            // vanishing with Commando's body/model hierarchy.
+            if (corpseDetached)
+            {
+                float elapsed = Time.time - currentStartTime;
+                if (death != null) ApplyClip(death, elapsed, false);
+                float progress = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / DeathFallDuration));
+                if (hipsBone != null)
+                {
+                    Vector3 p = hipsBone.position;
+                    p.y = Mathf.Lerp(deathHipsStartY, deathHipsTargetY, progress);
+                    hipsBone.position = p;
+                }
+                if (Time.time >= corpseDestroyAt) Destroy(gameObject);
+                return;
             }
 
             bool healthKnown = body != null && body.healthComponent != null;
@@ -350,6 +422,7 @@ namespace ImperialTrooperMod
                     }
                     ImperialTrooperAnimationSet.Clip spawnPose = aim ?? idle ?? walk ?? jog;
                     if (spawnPose != null) ApplyClip(spawnPose, 0f, false);
+                    ApplyWeaponPose();
                     return;
                 }
 
@@ -365,6 +438,24 @@ namespace ImperialTrooperMod
                     action = null;
                     current = death;
                     currentStartTime = Time.time;
+                    corpseDetached = true;
+                    corpseDestroyAt = Time.time + 5f;
+                    if (visualRoot != null)
+                    {
+                        visualRoot.SetParent(null, true);
+                        ImperialTrooperPlugin.LogSource?.LogInfo("Detached Stormtrooper corpse visual to finish death animation independently of body cleanup.");
+                    }
+                    if (hipsBone != null)
+                    {
+                        deathHipsStartY = hipsBone.position.y;
+                        deathHipsTargetY = ResolveDeathGroundY(hipsBone.position);
+                        // A bad ray hit or a raised platform must never move the corpse upward.
+                        if (deathHipsTargetY > deathHipsStartY - 0.20f)
+                            deathHipsTargetY = deathHipsStartY - 0.55f;
+                        ImperialTrooperPlugin.LogSource?.LogInfo("Death grounding prepared: instance=" + GetInstanceID() +
+                            ", hipsY=" + deathHipsStartY.ToString("0.00") +
+                            ", targetY=" + deathHipsTargetY.ToString("0.00") + ".");
+                    }
                     if (!loggedDeathClip)
                     {
                         loggedDeathClip = true;
@@ -373,7 +464,19 @@ namespace ImperialTrooperMod
                             ", bindingCount=" + targetBindings.Count + ".");
                     }
                 }
+
+                float deathProgress = Mathf.SmoothStep(0f, 1f,
+                    Mathf.Clamp01((Time.time - currentStartTime) / DeathFallDuration));
                 if (death != null) ApplyClip(death, Time.time - currentStartTime, false);
+                // The source death clip rotates the humanoid around its pelvis but has no root motion.
+                // Without lowering that pivot, corpses lie horizontally suspended at waist height.
+                // Move only the pelvis toward the sampled floor level after applying the skeletal pose.
+                if (hipsBone != null)
+                {
+                    Vector3 hipsPosition = hipsBone.position;
+                    hipsPosition.y = Mathf.Lerp(deathHipsStartY, deathHipsTargetY, deathProgress);
+                    hipsBone.position = hipsPosition;
+                }
                 LogPoseApplied("death");
                 return;
             }
@@ -382,31 +485,92 @@ namespace ImperialTrooperMod
                 ? body.characterMotor.velocity : Vector3.zero;
             planarVelocity.y = 0f;
             float speed = planarVelocity.magnitude;
+            // Hysteresis prevents RoR2's motor/AI velocity jitter around 4.5-5.0 m/s from
+            // switching walk<->jog every frame and restarting each clip at frame zero.
+            if (speed > 0.65f) lastMovementSignalTime = Time.time;
+            bool moving = speed > 0.45f ||
+                (movementCommand && speed > 0.25f) ||
+                (Time.time - lastMovementSignalTime) < 0.10f;
             bool firingAction = action != null && Time.time < actionEndTime;
             if (!firingAction) action = null;
 
             ImperialTrooperAnimationSet.Clip next;
-            if (speed > 4.0f && jog != null) next = jog;
-            else if ((movementCommand || speed > 0.35f) && walk != null) next = walk;
-            else if (inCombat && aim != null) next = aim;
-            else next = idle ?? aim ?? walk ?? jog ?? death;
+            if (moving && jog != null)
+            {
+                if (jogState)
+                {
+                    if (speed > 3.6f) next = jog;
+                    else { jogState = false; next = walk ?? jog; }
+                }
+                else if (speed >= 5.2f)
+                {
+                    jogState = true;
+                    next = jog;
+                }
+                else
+                {
+                    next = walk ?? jog;
+                }
+            }
+            else
+            {
+                jogState = false;
+                if (moving && walk != null) next = walk;
+                else if (inCombat && aim != null) next = aim;
+                else next = idle ?? aim ?? walk ?? jog ?? death;
+            }
 
             if (next == null) return;
             if (current != next)
             {
                 current = next;
                 currentStartTime = Time.time;
+                if (lastLoggedAnimationState != next.Name)
+                {
+                    lastLoggedAnimationState = next.Name;
+                    ImperialTrooperPlugin.LogSource?.LogInfo("Trooper animation state -> " + next.Name +
+                        " (instance=" + GetInstanceID() + ", planarSpeed=" + speed.ToString("0.00") +
+                        ", movementCommand=" + movementCommand + ").");
+                }
             }
 
-            // Keep the lower-body locomotion clip running while firing; a shot is an upper-body overlay,
-            // not a full-body action that freezes the legs and resets all bones on every burst bullet.
             ApplyClip(current, Time.time - currentStartTime, current.Loop);
-            bool moving = movementCommand || speed > 0.35f;
             if (moving && inCombat && aim != null)
                 ApplyUpperBodyClip(aim, Time.time - currentStartTime);
             if (firingAction && action != null)
                 ApplyUpperBodyClip(action, Time.time - actionStartTime);
-            LogPoseApplied(firingAction && action != null ? action.Name : current.Name);
+
+            // The authored clips are generic pistol motions. Re-aim the rifle wrist and solve the
+            // left-arm reach to the foregrip after clip playback so the weapon remains two-handed
+            // and is actually aligned with the target.
+            ApplyWeaponPose();
+
+        }
+
+        private float ResolveDeathGroundY(Vector3 hipsPosition)
+        {
+            // Query the environment below the pelvis but ignore this trooper's own body/model colliders.
+            RaycastHit[] hits = Physics.RaycastAll(
+                hipsPosition + Vector3.up * 0.25f, Vector3.down, 8f,
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            float nearestDistance = float.PositiveInfinity;
+            float groundY = hipsPosition.y - 0.55f;
+            for (int i = 0; i < hits.Length; i++)
+            {
+                Collider hitCollider = hits[i].collider;
+                if (hitCollider == null) continue;
+                Transform hitTransform = hitCollider.transform;
+                if (body != null && (hitTransform == body.transform || hitTransform.IsChildOf(body.transform)))
+                    continue;
+                if (visualRoot != null && (hitTransform == visualRoot || hitTransform.IsChildOf(visualRoot)))
+                    continue;
+                if (hits[i].distance < nearestDistance)
+                {
+                    nearestDistance = hits[i].distance;
+                    groundY = hits[i].point.y + 0.22f;
+                }
+            }
+            return groundY;
         }
 
         private void LogPoseApplied(string clipName)
@@ -419,6 +583,59 @@ namespace ImperialTrooperMod
                 ", leftArmEuler=" + (leftArmProbe != null ? leftArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
                 ", rightArmEuler=" + (rightArmProbe != null ? rightArmProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") +
                 ", leftLegEuler=" + (leftLegProbe != null ? leftLegProbe.localRotation.eulerAngles.ToString("F1") : "<missing>") + ".");
+        }
+
+        private void ApplyWeaponPose()
+        {
+            if (visualRoot == null || weaponTransform == null || rightHandBone == null) return;
+
+            Vector3 direction = aimDirection.sqrMagnitude > 0.001f ? aimDirection.normalized : -visualRoot.forward;
+            // The modeled E-11 barrel points along local -Z. Reset its grip transform every frame:
+            // animation data can reposition the hand bone, but must not preserve an old converted
+            // world-space offset on the child rifle.
+            // Match the setup position used when the E-11 is first attached: its origin is the
+            // receiver, so the pistol grip needs to be offset into the palm.
+            weaponTransform.localPosition = new Vector3(0f, 0.12f, -0.025f);
+            weaponTransform.localRotation = Quaternion.identity;
+            Quaternion desiredWeaponRotation = Quaternion.LookRotation(-direction, visualRoot.up);
+            rightHandBone.rotation = desiredWeaponRotation;
+
+            if (leftUpperArmBone == null || leftLowerArmBone == null || leftHandBone == null) return;
+            Vector3 foregrip = weaponTransform.TransformPoint(new Vector3(0f, -0.030f, -0.235f));
+            ApplyTwoBoneGripIk(leftUpperArmBone, leftLowerArmBone, leftHandBone, foregrip, -visualRoot.right);
+            leftHandBone.rotation = weaponTransform.rotation * Quaternion.Euler(8f, 0f, 5f);
+        }
+
+        private static void ApplyTwoBoneGripIk(Transform upper, Transform lower, Transform hand, Vector3 target, Vector3 pole)
+        {
+            if (upper == null || lower == null || hand == null) return;
+            Vector3 root = upper.position;
+            float upperLength = Vector3.Distance(root, lower.position);
+            float lowerLength = Vector3.Distance(lower.position, hand.position);
+            Vector3 toTarget = target - root;
+            float distance = toTarget.magnitude;
+            if (upperLength < 0.01f || lowerLength < 0.01f || distance < 0.01f) return;
+
+            float minDistance = Mathf.Abs(upperLength - lowerLength) + 0.01f;
+            float maxDistance = Mathf.Max(minDistance + 0.01f, upperLength + lowerLength - 0.01f);
+            distance = Mathf.Clamp(distance, minDistance, maxDistance);
+            Vector3 axis = toTarget.normalized;
+            Vector3 bend = Vector3.ProjectOnPlane(pole, axis);
+            if (bend.sqrMagnitude < 0.0001f)
+                bend = Vector3.ProjectOnPlane(upper.right, axis);
+            if (bend.sqrMagnitude < 0.0001f)
+                bend = Vector3.Cross(axis, Vector3.up);
+            bend.Normalize();
+
+            float along = (upperLength * upperLength - lowerLength * lowerLength + distance * distance) /
+                          (2f * distance);
+            float height = Mathf.Sqrt(Mathf.Max(0f, upperLength * upperLength - along * along));
+            Vector3 elbowTarget = root + axis * along + bend * height;
+
+            Quaternion upperDelta = Quaternion.FromToRotation(lower.position - upper.position, elbowTarget - upper.position);
+            upper.rotation = upperDelta * upper.rotation;
+            Quaternion lowerDelta = Quaternion.FromToRotation(hand.position - lower.position, target - lower.position);
+            lower.rotation = lowerDelta * lower.rotation;
         }
 
         private void ApplyUpperBodyClip(ImperialTrooperAnimationSet.Clip clip, float elapsed)
