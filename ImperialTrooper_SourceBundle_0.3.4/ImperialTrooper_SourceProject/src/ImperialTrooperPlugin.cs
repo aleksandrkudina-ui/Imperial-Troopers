@@ -2343,7 +2343,7 @@ namespace ImperialTrooperMod
                     smartCollision = true,
                     procCoefficient = 0.35f,
                     stopperMask = LayerIndex.world.mask,
-                    teamIndex = TeamIndex.Monster,
+                    // BulletAttack derives team attribution from owner; its API has no teamIndex field.
                     damageType = DamageType.Generic
                 };
                 attack.Fire();
